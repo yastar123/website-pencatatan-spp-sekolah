@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { Download, Download as FileDownloadIcon } from "lucide-react";
+import { formatRupiah } from "@/lib/utils";
+import { Download } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -20,29 +21,324 @@ interface ReportData {
   studentStats: { lunas: number; menunggak: number };
 }
 
+async function downloadLaporanExcel(
+  reportData: ReportData,
+  selectedYear: string,
+) {
+  const XLSX = await import("xlsx");
+
+  const totalPendapatan = reportData.monthlyRevenue.reduce(
+    (s, m) => s + m.amount,
+    0,
+  );
+
+  // ── Sheet 1: Ringkasan ────────────────────────────────────────────────
+  const ringkasanData = [
+    ["LAPORAN REKAPITULASI PEMBAYARAN SPP"],
+    [`Periode Tahun Ajaran: ${selectedYear}`],
+    [],
+    ["RINGKASAN STATISTIK"],
+    ["Keterangan", "Jumlah"],
+    ["Total Siswa Lunas", reportData.studentStats.lunas],
+    ["Total Siswa Menunggak", reportData.studentStats.menunggak],
+    ["Total Pendapatan (Rp)", totalPendapatan],
+  ];
+
+  // ── Sheet 2: Pendapatan Bulanan ───────────────────────────────────────
+  const bulanData = [
+    [`Pendapatan Bulanan - Tahun Ajaran ${selectedYear}`],
+    [],
+    ["Bulan", "Nominal Pendapatan (Rp)"],
+    ...reportData.monthlyRevenue.map((r) => [r.month, r.amount]),
+    [],
+    ["TOTAL", totalPendapatan],
+  ];
+
+  // ── Sheet 3: Per Kelas ────────────────────────────────────────────────
+  const kelasData = [
+    [`Rekapitulasi Per Kelas - Tahun Ajaran ${selectedYear}`],
+    [],
+    ["Kelas", "Total Pendapatan (Rp)"],
+    ...reportData.byClassData.map((r) => [r.className, r.total]),
+  ];
+
+  const wb = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet(ringkasanData),
+    "Ringkasan",
+  );
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet(bulanData),
+    "Pendapatan Bulanan",
+  );
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet(kelasData),
+    "Per Kelas",
+  );
+
+  XLSX.writeFile(wb, `laporan-spp-${selectedYear.replace("/", "-")}.xlsx`);
+}
+
+async function downloadLaporanPDF(
+  reportData: ReportData,
+  selectedYear: string,
+) {
+  const { default: jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+  const W = doc.internal.pageSize.getWidth();
+  let y = 0;
+
+  // ── Header band ──────────────────────────────────────────────────────
+  doc.setFillColor(37, 99, 235);
+  doc.rect(0, 0, W, 32, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("LAPORAN REKAPITULASI PEMBAYARAN SPP", W / 2, 13, {
+    align: "center",
+  });
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Periode Tahun Ajaran: ${selectedYear}`, W / 2, 22, {
+    align: "center",
+  });
+
+  y = 42;
+
+  // ── Ringkasan Statistik ───────────────────────────────────────────────
+  const totalPendapatan = reportData.monthlyRevenue.reduce(
+    (s, m) => s + m.amount,
+    0,
+  );
+
+  const drawStatBox = (
+    x: number,
+    label: string,
+    value: string,
+    r: number,
+    g: number,
+    b: number,
+  ) => {
+    doc.setFillColor(r, g, b);
+    doc.setDrawColor(r - 20, g - 20, b - 20);
+    doc.roundedRect(x, y, 58, 22, 3, 3, "FD");
+    doc.setTextColor(80, 80, 80);
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    doc.text(label, x + 29, y + 8, { align: "center" });
+    doc.setTextColor(r - 60, g - 60, b - 60);
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text(value, x + 29, y + 17, { align: "center" });
+  };
+
+  drawStatBox(
+    14,
+    "Total Siswa Lunas",
+    String(reportData.studentStats.lunas),
+    220,
+    252,
+    231,
+  );
+  drawStatBox(
+    76,
+    "Total Siswa Menunggak",
+    String(reportData.studentStats.menunggak),
+    254,
+    226,
+    226,
+  );
+  drawStatBox(
+    138,
+    "Total Pendapatan",
+    new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(totalPendapatan),
+    219,
+    234,
+    254,
+  );
+
+  y += 30;
+
+  // ── Section helper ────────────────────────────────────────────────────
+  const drawSectionTitle = (title: string) => {
+    doc.setFillColor(243, 244, 246);
+    doc.setDrawColor(209, 213, 219);
+    doc.rect(14, y, W - 28, 8, "FD");
+    doc.setTextColor(55, 65, 81);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "bold");
+    doc.text(title, 18, y + 5.5);
+    y += 11;
+  };
+
+  const drawTableHeader = (
+    cols: { label: string; x: number; align?: "left" | "right" }[],
+  ) => {
+    doc.setFillColor(37, 99, 235);
+    doc.rect(14, y, W - 28, 8, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    cols.forEach((col) => {
+      doc.text(col.label, col.x, y + 5.5, { align: col.align ?? "left" });
+    });
+    y += 10;
+  };
+
+  const drawTableRow = (
+    cols: {
+      value: string;
+      x: number;
+      align?: "left" | "right";
+      bold?: boolean;
+    }[],
+    shaded: boolean,
+  ) => {
+    if (shaded) {
+      doc.setFillColor(249, 250, 251);
+      doc.rect(14, y - 3, W - 28, 8, "F");
+    }
+    doc.setTextColor(17, 24, 39);
+    doc.setFontSize(8.5);
+    cols.forEach((col) => {
+      doc.setFont("helvetica", col.bold ? "bold" : "normal");
+      doc.text(col.value, col.x, y + 2, { align: col.align ?? "left" });
+    });
+    doc.setDrawColor(229, 231, 235);
+    doc.line(14, y + 5, W - 14, y + 5);
+    y += 8;
+  };
+
+  // ── Tabel Pendapatan Bulanan ──────────────────────────────────────────
+  drawSectionTitle("PENDAPATAN BULANAN");
+  drawTableHeader([
+    { label: "Bulan", x: 18 },
+    { label: "Nominal Pendapatan", x: W - 16, align: "right" },
+  ]);
+
+  reportData.monthlyRevenue.forEach((row, idx) => {
+    drawTableRow(
+      [
+        { value: row.month, x: 18 },
+        {
+          value: new Intl.NumberFormat("id-ID", {
+            style: "currency",
+            currency: "IDR",
+            maximumFractionDigits: 0,
+          }).format(row.amount),
+          x: W - 16,
+          align: "right",
+          bold: row.amount > 0,
+        },
+      ],
+      idx % 2 === 0,
+    );
+  });
+
+  // Total row
+  doc.setFillColor(37, 99, 235);
+  doc.rect(14, y - 3, W - 28, 9, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "bold");
+  doc.text("TOTAL", 18, y + 3);
+  doc.text(
+    new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(totalPendapatan),
+    W - 16,
+    y + 3,
+    { align: "right" },
+  );
+  y += 14;
+
+  // ── Tabel Pendapatan per Kelas ────────────────────────────────────────
+  drawSectionTitle("REKAPITULASI PER KELAS");
+  drawTableHeader([
+    { label: "Kelas", x: 18 },
+    { label: "Total Pendapatan", x: W - 16, align: "right" },
+  ]);
+
+  reportData.byClassData.forEach((row, idx) => {
+    drawTableRow(
+      [
+        { value: row.className, x: 18 },
+        {
+          value: new Intl.NumberFormat("id-ID", {
+            style: "currency",
+            currency: "IDR",
+            maximumFractionDigits: 0,
+          }).format(row.total),
+          x: W - 16,
+          align: "right",
+          bold: true,
+        },
+      ],
+      idx % 2 === 0,
+    );
+  });
+
+  y += 6;
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  doc.setDrawColor(209, 213, 219);
+  doc.line(14, y, W - 14, y);
+  y += 6;
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica", "italic");
+  doc.text(
+    `Dicetak pada: ${new Date().toLocaleString("id-ID")}  |  Sistem Informasi Pembayaran Sekolah`,
+    W / 2,
+    y,
+    { align: "center" },
+  );
+
+  doc.save(`laporan-spp-${selectedYear.replace("/", "-")}.pdf`);
+}
+
 export default function LaporanPage() {
   const { user } = useAuth();
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedYear, setSelectedYear] = useState("2023/2024");
+  const [selectedYear, setSelectedYear] = useState("");
   const [academicYears, setAcademicYears] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("all");
   const [selectedClass, setSelectedClass] = useState("all");
 
+  // Load academic years, then set selectedYear to the active year (or first year)
   useEffect(() => {
     const fetchAcademicYears = async () => {
       try {
         const res = await fetch("/api/academic-years");
         const data = await res.json();
-        setAcademicYears(data.years || []);
+        const years: any[] = data.years || [];
+        setAcademicYears(years);
+        if (years.length > 0) {
+          const active = data.activeYear ?? years[0];
+          setSelectedYear(active.year);
+        }
       } catch (error) {
         console.error("Failed to fetch academic years:", error);
       }
     };
 
     fetchAcademicYears();
-    // fetch classes for filter
+
     const fetchClasses = async () => {
       try {
         const res = await fetch("/api/classes");
@@ -55,11 +351,16 @@ export default function LaporanPage() {
     fetchClasses();
   }, []);
 
+  // Fetch report data only when a year is selected
   useEffect(() => {
+    if (!selectedYear) return;
+
     const fetchReportData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/reports?year=${selectedYear}`);
+        const res = await fetch(
+          `/api/reports?year=${encodeURIComponent(selectedYear)}`,
+        );
         const data = await res.json();
         setReportData(data);
       } catch (error) {
@@ -149,43 +450,25 @@ export default function LaporanPage() {
             ))}
           </select>
         </div>
-        <button className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+        <button
+          onClick={() =>
+            reportData && downloadLaporanPDF(reportData, selectedYear)
+          }
+          disabled={!reportData}
+          className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           <Download size={20} />
           Cetak PDF
         </button>
         <button
-          onClick={async () => {
-            try {
-              const params = new URLSearchParams({ year: selectedYear });
-              if (selectedMonth) params.set("month", selectedMonth);
-              if (selectedClass && selectedClass !== "all")
-                params.set("classId", selectedClass);
-              const res = await fetch(
-                `/api/reports/export?${params.toString()}`,
-              );
-              if (!res.ok) throw new Error("Export failed");
-              const blob = await res.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              const disp = res.headers.get("Content-Disposition") || "";
-              let filename = "laporan.csv";
-              const m = disp.match(/filename="?(.*?)"?$/);
-              if (m) filename = m[1];
-              a.href = url;
-              a.download = filename;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              URL.revokeObjectURL(url);
-            } catch (error) {
-              console.error(error);
-              alert("Gagal mengekspor laporan");
-            }
-          }}
-          className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+          onClick={() =>
+            reportData && downloadLaporanExcel(reportData, selectedYear)
+          }
+          disabled={!reportData}
+          className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <FileDownloadIcon size={20} />
-          Export CSV
+          <Download size={20} />
+          Export Excel
         </button>
       </div>
 
@@ -214,12 +497,12 @@ export default function LaporanPage() {
                 Total Pendapatan
               </p>
               <p className="text-3xl font-bold text-blue-600 mt-2">
-                Rp{" "}
-                {reportData.monthlyRevenue.reduce(
-                  (sum, m) => sum + m.amount,
-                  0,
-                ) / 1000000}
-                M
+                {formatRupiah(
+                  reportData.monthlyRevenue.reduce(
+                    (sum, m) => sum + m.amount,
+                    0,
+                  ),
+                )}
               </p>
             </div>
           </div>

@@ -65,17 +65,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const { nis, name, classId, address, phoneOrangTua } = await request.json();
+    const { nis, nisn, name, gender, classId, address, phoneOrangTua } =
+      await request.json();
 
     const student = await prisma.student.create({
       data: {
         nis,
+        nisn: nisn || null,
         name,
+        gender: gender || null,
         classId,
         address,
         phoneOrangTua,
         status: "MENUNGGAK",
-      },
+      } as any,
       include: { class: true },
     });
 

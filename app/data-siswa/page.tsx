@@ -200,6 +200,9 @@ export default function DataSiswaPage() {
                     Kelas
                   </th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-700">
+                    Alamat
+                  </th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">
                     Status Pembayaran
                   </th>
                   {user?.role === "BENDAHARA" && (
@@ -236,6 +239,12 @@ export default function DataSiswaPage() {
                       <td className="py-3 px-4 text-gray-600">
                         {student.class?.name || "-"}
                       </td>
+                      <td
+                        className="py-3 px-4 text-gray-600 max-w-[180px] truncate"
+                        title={student.address || "-"}
+                      >
+                        {student.address || "-"}
+                      </td>
                       <td className="py-3 px-4">
                         <span
                           className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
@@ -244,7 +253,11 @@ export default function DataSiswaPage() {
                               : "bg-red-100 text-red-800"
                           }`}
                         >
-                          {student.status || "-"}
+                          {student.status === "LUNAS"
+                            ? "Lunas"
+                            : student.status === "MENUNGGAK"
+                              ? "Nunggak"
+                              : student.status || "-"}
                         </span>
                       </td>
                       {user?.role === "BENDAHARA" && (
@@ -276,43 +289,84 @@ export default function DataSiswaPage() {
       </div>
 
       {/* Pagination */}
-      {pagination.pages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() =>
-              setPagination((prev) => ({
-                ...prev,
-                page: Math.max(1, prev.page - 1),
-              }))
-            }
-            disabled={pagination.page === 1}
-            className="px-4 py-2 border border-gray-300 rounded-lg disabled:opacity-50"
-          >
-            Sebelumnya
-          </button>
-          {Array.from({ length: pagination.pages }, (_, i) => (
-            <button
-              key={i + 1}
-              onClick={() =>
-                setPagination((prev) => ({ ...prev, page: i + 1 }))
-              }
-              className={`px-3 py-2 rounded-lg ${pagination.page === i + 1 ? "bg-blue-600 text-white" : "border border-gray-300"}`}
-            >
-              {i + 1}
-            </button>
-          ))}
-          <button
-            onClick={() =>
-              setPagination((prev) => ({
-                ...prev,
-                page: Math.min(prev.pages, prev.page + 1),
-              }))
-            }
-            disabled={pagination.page === pagination.pages}
-            className="px-4 py-2 border border-gray-300 rounded-lg disabled:opacity-50"
-          >
-            Selanjutnya
-          </button>
+      {pagination.total > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white px-4 py-3 rounded-lg border border-gray-200">
+          {/* Info */}
+          <p className="text-sm text-gray-600">
+            Menampilkan{" "}
+            <span className="font-semibold text-gray-900">
+              {(pagination.page - 1) * pagination.limit + 1}
+            </span>{" "}
+            –{" "}
+            <span className="font-semibold text-gray-900">
+              {Math.min(pagination.page * pagination.limit, pagination.total)}
+            </span>{" "}
+            dari{" "}
+            <span className="font-semibold text-gray-900">
+              {pagination.total}
+            </span>{" "}
+            data
+          </p>
+
+          {/* Buttons */}
+          {pagination.pages > 1 && (
+            <div className="flex items-center gap-1">
+              {/* Prev */}
+              <button
+                onClick={() =>
+                  setPagination((prev) => ({
+                    ...prev,
+                    page: Math.max(1, prev.page - 1),
+                  }))
+                }
+                disabled={pagination.page === 1}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50"
+              >
+                ‹ Prev
+              </button>
+
+              {/* Page numbers — sliding window of max 5 */}
+              {(() => {
+                const total = pagination.pages;
+                const cur = pagination.page;
+                let start = Math.max(1, cur - 2);
+                let end = Math.min(total, start + 4);
+                if (end - start < 4) start = Math.max(1, end - 4);
+                return Array.from(
+                  { length: end - start + 1 },
+                  (_, i) => start + i,
+                ).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() =>
+                      setPagination((prev) => ({ ...prev, page: p }))
+                    }
+                    className={`px-3 py-1.5 text-sm rounded-lg ${
+                      p === cur
+                        ? "bg-blue-600 text-white font-semibold"
+                        : "border border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ));
+              })()}
+
+              {/* Next */}
+              <button
+                onClick={() =>
+                  setPagination((prev) => ({
+                    ...prev,
+                    page: Math.min(prev.pages, prev.page + 1),
+                  }))
+                }
+                disabled={pagination.page === pagination.pages}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50"
+              >
+                Next ›
+              </button>
+            </div>
+          )}
         </div>
       )}
 

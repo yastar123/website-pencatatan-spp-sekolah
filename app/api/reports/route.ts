@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
-import { PrismaClient } from '@prisma/client';
+import { NextRequest, NextResponse } from "next/server";
+import { getSession } from "@/lib/session";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -8,11 +8,11 @@ export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const year = searchParams.get('year') || '2023/2024';
+    const year = searchParams.get("year") || "2023/2024";
 
     // Get academic year
     const academicYear = await prisma.academicYear.findFirst({
@@ -20,27 +20,43 @@ export async function GET(request: NextRequest) {
     });
 
     if (!academicYear) {
-      return NextResponse.json(
-        { monthlyRevenue: [], byClassData: [], studentStats: { lunas: 0, menunggak: 0 } }
-      );
+      return NextResponse.json({
+        monthlyRevenue: [],
+        byClassData: [],
+        studentStats: { lunas: 0, menunggak: 0 },
+      });
     }
 
-    // Get monthly revenue
+    // Filter payments by students whose class belongs to this academic year
+    // (avoids relying on createdAt date range which breaks for newly entered data)
+    const paymentWhere = {
+      status: "BERHASIL",
+      student: { class: { academicYearId: academicYear.id } },
+    };
+
+    // Get all matching payments for monthly breakdown
     const payments = await prisma.payment.findMany({
-      where: {
-        status: 'BERHASIL',
-        createdAt: {
-          gte: academicYear.startDate,
-          lte: academicYear.endDate,
-        },
-      },
-      include: { student: { select: { classId: true } } },
+      where: paymentWhere,
+      select: { amount: true, createdAt: true },
     });
 
     // Process monthly data
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
     const monthlyData = Array(12).fill(0);
-    
+
     payments.forEach((payment) => {
       const month = new Date(payment.createdAt).getMonth();
       monthlyData[month] += payment.amount;
@@ -52,18 +68,6 @@ export async function GET(request: NextRequest) {
     }));
 
     // Get revenue by class
-    const classPayments = await prisma.payment.groupBy({
-      by: ['id'],
-      where: {
-        status: 'BERHASIL',
-        createdAt: {
-          gte: academicYear.startDate,
-          lte: academicYear.endDate,
-        },
-      },
-      _sum: { amount: true },
-    });
-
     const classes = await prisma.class.findMany({
       where: { academicYearId: academicYear.id },
     });
@@ -72,12 +76,8 @@ export async function GET(request: NextRequest) {
       classes.map(async (cls) => {
         const total = await prisma.payment.aggregate({
           where: {
+            status: "BERHASIL",
             student: { classId: cls.id },
-            status: 'BERHASIL',
-            createdAt: {
-              gte: academicYear.startDate,
-              lte: academicYear.endDate,
-            },
           },
           _sum: { amount: true },
         });
@@ -86,16 +86,16 @@ export async function GET(request: NextRequest) {
           className: cls.name,
           total: total._sum.amount || 0,
         };
-      })
+      }),
     );
 
     // Student stats
     const studentStats = {
       lunas: await prisma.student.count({
-        where: { status: 'LUNAS' },
+        where: { status: "LUNAS" },
       }),
       menunggak: await prisma.student.count({
-        where: { status: 'MENUNGGAK' },
+        where: { status: "MENUNGGAK" },
       }),
     };
 
@@ -105,7 +105,10 @@ export async function GET(request: NextRequest) {
       studentStats,
     });
   } catch (error) {
-    console.error('Reports error:', error);
-    return NextResponse.json({ error: 'Failed to fetch reports' }, { status: 500 });
+    console.error("Reports error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch reports" },
+      { status: 500 },
+    );
   }
 }

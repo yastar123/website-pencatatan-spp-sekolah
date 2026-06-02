@@ -12,8 +12,10 @@ export async function GET(request: NextRequest, context: any) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const id = (await params).id;
+
     const student = await prisma.student.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { class: true },
     });
 
@@ -39,17 +41,22 @@ export async function PUT(request: NextRequest, context: any) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const { nis, name, classId, address, phoneOrangTua } = await request.json();
+    const { nis, nisn, name, gender, classId, address, phoneOrangTua } =
+      await request.json();
+
+    const id = (await params).id;
 
     const student = await prisma.student.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         nis,
+        nisn: nisn || null,
         name,
+        gender: gender || null,
         classId,
         address,
         phoneOrangTua,
-      },
+      } as any,
       include: { class: true },
     });
 
@@ -72,8 +79,10 @@ export async function DELETE(request: NextRequest, context: any) {
     }
 
     // Clear any User.studentId references to avoid FK constraint failures, then delete student in a transaction
+    const id = (await params).id;
+
     const student = await prisma.student.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true },
     });
     if (!student) {
@@ -82,10 +91,10 @@ export async function DELETE(request: NextRequest, context: any) {
 
     await prisma.$transaction([
       prisma.user.updateMany({
-        where: { studentId: params.id },
+        where: { studentId: id },
         data: { studentId: null },
       }),
-      prisma.student.delete({ where: { id: params.id } }),
+      prisma.student.delete({ where: { id } }),
     ]);
 
     return NextResponse.json({ success: true });

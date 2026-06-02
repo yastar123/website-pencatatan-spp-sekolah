@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { formatRupiah } from "@/lib/utils";
 import { Search, Download, Eye } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import PaymentDetailModal from "@/components/modals/payment-detail-modal";
 
 interface Payment {
   id: string;
@@ -26,6 +27,171 @@ interface PaginationData {
   pages: number;
 }
 
+function getStatusColor(status: string) {
+  switch (status) {
+    case "BERHASIL":
+      return "bg-green-100 text-green-800";
+    case "MENUNGGAK":
+      return "bg-red-100 text-red-800";
+    case "PENDING":
+      return "bg-yellow-100 text-yellow-800";
+    default:
+      return "bg-gray-100 text-gray-800";
+  }
+}
+
+function statusLabel(status: string) {
+  switch (status) {
+    case "BERHASIL":
+      return "Berhasil";
+    case "MENUNGGAK":
+      return "Nunggak";
+    default:
+      return status;
+  }
+}
+
+// ── PDF generator ─────────────────────────────────────────────────────────────
+async function downloadPDF(payment: Payment) {
+  const { default: jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "mm", format: "a5" });
+
+  const W = doc.internal.pageSize.getWidth();
+  let y = 0;
+
+  // ── Header band ──────────────────────────────────────────────────────
+  doc.setFillColor(37, 99, 235); // blue-600
+  doc.rect(0, 0, W, 28, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(14);
+  doc.setFont("helvetica", "bold");
+  doc.text("KWITANSI PEMBAYARAN", W / 2, 11, { align: "center" });
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.text("Sistem Informasi Pembayaran Sekolah", W / 2, 18, {
+    align: "center",
+  });
+
+  y = 36;
+
+  // ── Transaction No badge ─────────────────────────────────────────────
+  doc.setFillColor(239, 246, 255); // blue-50
+  doc.setDrawColor(191, 219, 254); // blue-200
+  doc.roundedRect(10, y - 5, W - 20, 14, 2, 2, "FD");
+
+  doc.setTextColor(30, 64, 175); // blue-800
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.text("No. Transaksi", W / 2, y + 1, { align: "center" });
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text(payment.transactionNo, W / 2, y + 7, { align: "center" });
+
+  y += 20;
+
+  // ── Section helper ───────────────────────────────────────────────────
+  const drawSection = (title: string) => {
+    doc.setFillColor(249, 250, 251); // gray-50
+    doc.setDrawColor(229, 231, 235); // gray-200
+    doc.rect(10, y, W - 20, 7, "FD");
+
+    doc.setTextColor(55, 65, 81); // gray-700
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.text(title, 14, y + 5);
+    y += 10;
+  };
+
+  const drawRow = (label: string, value: string, valueBold = false) => {
+    doc.setTextColor(107, 114, 128); // gray-500
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.text(label, 14, y);
+
+    doc.setTextColor(17, 24, 39); // gray-900
+    doc.setFont("helvetica", valueBold ? "bold" : "normal");
+    doc.text(value, W - 14, y, { align: "right" });
+    y += 7;
+  };
+
+  const drawDivider = () => {
+    doc.setDrawColor(243, 244, 246); // gray-100
+    doc.line(10, y - 2, W - 10, y - 2);
+    y += 2;
+  };
+
+  // ── Tanggal & Waktu ──────────────────────────────────────────────────
+  drawSection("TANGGAL & WAKTU");
+
+  const tgl = new Date(payment.createdAt);
+  drawRow(
+    "Tanggal",
+    tgl.toLocaleDateString("id-ID", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }),
+  );
+  drawRow("Waktu", tgl.toLocaleTimeString("id-ID"));
+  y += 3;
+
+  // ── Data Siswa ───────────────────────────────────────────────────────
+  drawSection("DATA SISWA");
+  drawRow("Nama Siswa", payment.student.name);
+  drawRow("NIS", payment.student.nis);
+  y += 3;
+
+  // ── Detail Pembayaran ────────────────────────────────────────────────
+  drawSection("DETAIL PEMBAYARAN");
+  drawRow("Jenis Pembayaran", payment.paymentType);
+  drawRow("Nominal", formatRupiah(payment.amount), true);
+  drawRow("Metode Pembayaran", payment.paymentMethod);
+
+  // Status with colored text
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(8.5);
+  doc.setFont("helvetica", "normal");
+  doc.text("Status", 14, y);
+
+  const isLunas = payment.status === "BERHASIL";
+  doc.setTextColor(isLunas ? 22 : 185, isLunas ? 163 : 28, isLunas ? 74 : 28);
+  doc.setFont("helvetica", "bold");
+  doc.text(statusLabel(payment.status), W - 14, y, { align: "right" });
+  y += 7;
+
+  if (payment.notes) {
+    drawDivider();
+    drawRow("Catatan", payment.notes);
+  }
+
+  y += 6;
+
+  // ── Footer ───────────────────────────────────────────────────────────
+  doc.setDrawColor(229, 231, 235);
+  doc.line(10, y, W - 10, y);
+  y += 8;
+
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica", "italic");
+  doc.text("Dokumen ini dicetak secara otomatis oleh sistem.", W / 2, y, {
+    align: "center",
+  });
+  y += 5;
+  doc.text(`Dicetak pada: ${new Date().toLocaleString("id-ID")}`, W / 2, y, {
+    align: "center",
+  });
+
+  // ── Save ─────────────────────────────────────────────────────────────
+  doc.save(`kwitansi-${payment.transactionNo}.pdf`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function RiwayatPage() {
   const { user } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -37,6 +203,7 @@ export default function RiwayatPage() {
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [detailPayment, setDetailPayment] = useState<Payment | null>(null);
 
   useEffect(() => {
     const fetchPayments = async () => {
@@ -68,19 +235,6 @@ export default function RiwayatPage() {
     return () => clearTimeout(debounceTimer);
   }, [search, pagination.page]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "BERHASIL":
-        return "bg-green-100 text-green-800";
-      case "GAGAL":
-        return "bg-red-100 text-red-800";
-      case "PENDING":
-        return "bg-yellow-100 text-yellow-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -104,10 +258,6 @@ export default function RiwayatPage() {
               className="pl-10"
             />
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
-            <Download size={20} />
-            Export
-          </button>
         </div>
       </div>
 
@@ -139,7 +289,7 @@ export default function RiwayatPage() {
                     Nama Siswa
                   </th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-700">
-                    Jenis Pembayaran
+                    Jenis
                   </th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-700">
                     Nominal
@@ -161,10 +311,10 @@ export default function RiwayatPage() {
                     key={payment.id}
                     className="border-b border-gray-100 hover:bg-gray-50"
                   >
-                    <td className="py-3 px-4 font-medium text-gray-900">
+                    <td className="py-3 px-4 font-mono text-xs text-gray-700 max-w-[140px] truncate">
                       {payment.transactionNo}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">
                       {new Date(payment.createdAt).toLocaleDateString("id-ID")}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
@@ -176,7 +326,7 @@ export default function RiwayatPage() {
                     <td className="py-3 px-4 text-gray-600">
                       {payment.paymentType}
                     </td>
-                    <td className="py-3 px-4 font-semibold text-gray-900">
+                    <td className="py-3 px-4 font-semibold text-gray-900 whitespace-nowrap">
                       {formatRupiah(payment.amount)}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
@@ -186,16 +336,28 @@ export default function RiwayatPage() {
                       <span
                         className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(payment.status)}`}
                       >
-                        {payment.status}
+                        {statusLabel(payment.status)}
                       </span>
                     </td>
-                    <td className="py-3 px-4 flex gap-2">
-                      <button className="p-2 text-blue-600 hover:bg-blue-50 rounded">
-                        <Eye size={16} />
-                      </button>
-                      <button className="p-2 text-blue-600 hover:bg-blue-50 rounded">
-                        <Download size={16} />
-                      </button>
+                    <td className="py-3 px-4">
+                      <div className="flex gap-1">
+                        {/* Detail */}
+                        <button
+                          onClick={() => setDetailPayment(payment)}
+                          title="Lihat Detail"
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        {/* Download PDF */}
+                        <button
+                          onClick={() => downloadPDF(payment)}
+                          title="Download PDF"
+                          className="p-2 text-gray-600 hover:bg-gray-100 rounded transition-colors"
+                        >
+                          <Download size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -206,52 +368,96 @@ export default function RiwayatPage() {
       </div>
 
       {/* Pagination */}
-      {pagination.pages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() =>
-              setPagination((prev) => ({
-                ...prev,
-                page: Math.max(1, prev.page - 1),
-              }))
-            }
-            disabled={pagination.page === 1}
-            className="px-4 py-2 border border-gray-300 rounded-lg disabled:opacity-50"
-          >
-            Sebelumnya
-          </button>
-          {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
-            const pageNum = Math.max(1, pagination.page - 2) + i;
-            if (pageNum > pagination.pages) return null;
-            return (
+      {pagination.total > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white px-4 py-3 rounded-lg border border-gray-200">
+          {/* Info */}
+          <p className="text-sm text-gray-600">
+            Menampilkan{" "}
+            <span className="font-semibold text-gray-900">
+              {(pagination.page - 1) * pagination.limit + 1}
+            </span>{" "}
+            –{" "}
+            <span className="font-semibold text-gray-900">
+              {Math.min(pagination.page * pagination.limit, pagination.total)}
+            </span>{" "}
+            dari{" "}
+            <span className="font-semibold text-gray-900">
+              {pagination.total}
+            </span>{" "}
+            data
+          </p>
+
+          {/* Buttons */}
+          {pagination.pages > 1 && (
+            <div className="flex items-center gap-1">
+              {/* Prev */}
               <button
-                key={pageNum}
                 onClick={() =>
-                  setPagination((prev) => ({ ...prev, page: pageNum }))
+                  setPagination((prev) => ({
+                    ...prev,
+                    page: Math.max(1, prev.page - 1),
+                  }))
                 }
-                className={`px-3 py-2 rounded-lg ${
-                  pagination.page === pageNum
-                    ? "bg-blue-600 text-white"
-                    : "border border-gray-300"
-                }`}
+                disabled={pagination.page === 1}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50"
               >
-                {pageNum}
+                ‹ Prev
               </button>
-            );
-          })}
-          <button
-            onClick={() =>
-              setPagination((prev) => ({
-                ...prev,
-                page: Math.min(prev.pages, prev.page + 1),
-              }))
-            }
-            disabled={pagination.page === pagination.pages}
-            className="px-4 py-2 border border-gray-300 rounded-lg disabled:opacity-50"
-          >
-            Selanjutnya
-          </button>
+
+              {/* Page numbers — sliding window of max 5 */}
+              {(() => {
+                const total = pagination.pages;
+                const cur = pagination.page;
+                let start = Math.max(1, cur - 2);
+                let end = Math.min(total, start + 4);
+                if (end - start < 4) start = Math.max(1, end - 4);
+                return Array.from(
+                  { length: end - start + 1 },
+                  (_, i) => start + i,
+                ).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() =>
+                      setPagination((prev) => ({ ...prev, page: p }))
+                    }
+                    className={`px-3 py-1.5 text-sm rounded-lg ${
+                      p === cur
+                        ? "bg-blue-600 text-white font-semibold"
+                        : "border border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ));
+              })()}
+
+              {/* Next */}
+              <button
+                onClick={() =>
+                  setPagination((prev) => ({
+                    ...prev,
+                    page: Math.min(prev.pages, prev.page + 1),
+                  }))
+                }
+                disabled={pagination.page === pagination.pages}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50"
+              >
+                Next ›
+              </button>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Detail Modal */}
+      {detailPayment && (
+        <PaymentDetailModal
+          payment={detailPayment}
+          onClose={() => setDetailPayment(null)}
+          onDownload={(p) => {
+            downloadPDF(p);
+          }}
+        />
       )}
     </div>
   );

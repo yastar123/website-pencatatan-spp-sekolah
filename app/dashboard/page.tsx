@@ -249,12 +249,14 @@ export default function DashboardPage() {
                       className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
                         tx.status === "BERHASIL"
                           ? "bg-green-100 text-green-800"
-                          : tx.status === "GAGAL"
-                            ? "bg-red-100 text-red-800"
-                            : "bg-yellow-100 text-yellow-800"
+                          : "bg-red-100 text-red-800"
                       }`}
                     >
-                      {tx.status}
+                      {tx.status === "BERHASIL"
+                        ? "Berhasil"
+                        : tx.status === "MENUNGGAK"
+                          ? "Nunggak"
+                          : tx.status}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-gray-600">

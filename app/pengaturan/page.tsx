@@ -61,42 +61,23 @@ export default function PengaturanPage() {
   }, [user, loading, router]);
 
   const handleDeleteClass = async (id: string) => {
-    if (!confirm("Yakin ingin menghapus kelas ini?")) return;
+    // Confirm once (inform user that students will be removed)
+    if (
+      !confirm(
+        "Yakin ingin menghapus kelas ini beserta semua siswa yang terdaftar?",
+      )
+    )
+      return;
 
     try {
-      const res = await fetch(`/api/classes/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/classes/${id}`, {
+        method: "DELETE",
+      });
       if (res.ok) {
         setClasses(classes.filter((c) => c.id !== id));
         return;
       }
 
-      // If deletion blocked due to enrolled students, offer force-delete
-      if (res.status === 400) {
-        const body = await res.json().catch(() => ({}));
-        const message = body?.error || "Kelas memiliki siswa terdaftar";
-        // fetch blocking students count/details
-        const studentsRes = await fetch(`/api/students?classId=${id}`);
-        const studentsBody = await studentsRes.json().catch(() => ({}));
-        const blocked = Array.isArray(studentsBody.students)
-          ? studentsBody.students
-          : [];
-
-        const confirmMsg = `${message}. Jumlah siswa: ${blocked.length}. Hapus kelas beserta siswanya?`;
-        if (confirm(confirmMsg)) {
-          const forceRes = await fetch(`/api/classes/${id}?force=true`, {
-            method: "DELETE",
-          });
-          if (forceRes.ok) {
-            setClasses(classes.filter((c) => c.id !== id));
-            return;
-          }
-          const err = await forceRes.json().catch(() => ({}));
-          alert(err?.error || "Gagal menghapus kelas dengan force");
-        }
-        return;
-      }
-
-      // other errors
       const err = await res.json().catch(() => ({}));
       alert(err?.error || "Gagal menghapus kelas");
     } catch (error) {

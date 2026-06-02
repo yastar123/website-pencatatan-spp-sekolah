@@ -89,19 +89,34 @@ export async function POST(request: NextRequest) {
       notes,
     } = await request.json();
 
+    const resolvedStatus = status || "BERHASIL";
+
     const payment = await prisma.payment.create({
       data: {
         studentId,
         paymentType,
         amount,
         paymentMethod,
-        status: status || "BERHASIL",
+        status: resolvedStatus,
         proofUrl,
         notes,
         createdBy: session.userId,
       },
       include: { student: { select: { name: true, nis: true } } },
     });
+
+    // Auto-update student status: BERHASIL → LUNAS, MENUNGGAK → MENUNGGAK
+    if (resolvedStatus === "BERHASIL") {
+      await prisma.student.update({
+        where: { id: studentId },
+        data: { status: "LUNAS" },
+      });
+    } else if (resolvedStatus === "MENUNGGAK") {
+      await prisma.student.update({
+        where: { id: studentId },
+        data: { status: "MENUNGGAK" },
+      });
+    }
 
     return NextResponse.json(payment, { status: 201 });
   } catch (error) {

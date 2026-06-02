@@ -12,8 +12,10 @@ export async function GET(request: NextRequest, context: any) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const id = (await params).id;
+
     const classData = await prisma.class.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { _count: { select: { students: true } } },
     });
 
@@ -39,40 +41,42 @@ export async function DELETE(request: NextRequest, context: any) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    // Support force delete via query param: ?force=true
-    const force = request.nextUrl.searchParams.get("force") === "true";
+    const id = (await params).id;
 
-    // Count students in class
-    const studentCount = await prisma.student.count({
-      where: { classId: params.id },
+    const classData = await prisma.class.findUnique({ where: { id } });
+    if (!classData) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
+
+    // 1. Kumpulkan semua siswa di kelas ini
+    const students = await prisma.student.findMany({
+      where: { classId: id },
+      select: { id: true },
     });
-    if (studentCount > 0 && !force) {
-      return NextResponse.json(
-        { error: "Class has enrolled students; remove or reassign them first" },
-        { status: 400 },
-      );
-    }
+    const studentIds = students.map((s) => s.id);
 
-    if (studentCount > 0 && force) {
-      // find student IDs in this class
-      const students = await prisma.student.findMany({
-        where: { classId: params.id },
-        select: { id: true },
+    // 2. Hapus semua data terkait siswa secara eksplisit
+    if (studentIds.length > 0) {
+      // Hapus payments siswa
+      await prisma.payment.deleteMany({
+        where: { studentId: { in: studentIds } },
       });
-      const studentIds = students.map((s) => s.id);
-
-      // clear user.studentId for users linked to these students, then delete students and class in a transaction
-      await prisma.$transaction([
-        prisma.user.updateMany({
-          where: { studentId: { in: studentIds } },
-          data: { studentId: null },
-        }),
-        prisma.student.deleteMany({ where: { id: { in: studentIds } } }),
-        prisma.class.delete({ where: { id: params.id } }),
-      ]);
-    } else {
-      await prisma.class.delete({ where: { id: params.id } });
+      // Putus link User → Student
+      await prisma.user.updateMany({
+        where: { studentId: { in: studentIds } },
+        data: { studentId: null },
+      });
+      // Hapus siswa
+      await prisma.student.deleteMany({
+        where: { id: { in: studentIds } },
+      });
     }
+
+    // 3. Hapus SPPRate untuk kelas ini
+    await prisma.sPPRate.deleteMany({ where: { classId: id } });
+
+    // 4. Hapus kelas
+    await prisma.class.delete({ where: { id } });
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -93,9 +97,10 @@ export async function PUT(request: NextRequest, context: any) {
     }
 
     const { name, academicYearId } = await request.json();
+    const id = (await params).id;
 
     const updated = await prisma.class.update({
-      where: { id: params.id },
+      where: { id },
       data: { name, academicYearId },
       include: { _count: { select: { students: true } } },
     });

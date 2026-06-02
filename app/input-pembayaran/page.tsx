@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
-import { Search, Upload } from "lucide-react";
+import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -38,10 +38,7 @@ export default function InputPembayaranPage() {
     paymentMethod: "Tunai",
     status: "BERHASIL",
     notes: "",
-    proofFile: null as File | null,
   });
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (loading) return; // wait for auth check to finish
@@ -100,40 +97,29 @@ export default function InputPembayaranPage() {
       return;
     }
 
+    // Validasi nominal
+    const parsedAmount = parseInt(formData.amount);
+    if (!formData.amount || isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError("Nominal pembayaran harus diisi dan lebih dari 0");
+      return;
+    }
+
     setError("");
     setSubmitting(true);
 
     try {
-      let response: Response;
-
-      if (formData.proofFile) {
-        const fd = new FormData();
-        fd.append("studentId", selectedStudent.id);
-        fd.append("paymentType", formData.paymentType);
-        fd.append("amount", String(parseInt(formData.amount) || 0));
-        fd.append("paymentMethod", formData.paymentMethod);
-        fd.append("status", formData.status);
-        fd.append("notes", formData.notes);
-        fd.append("proofFile", formData.proofFile);
-
-        response = await fetch("/api/payments", {
-          method: "POST",
-          body: fd,
-        });
-      } else {
-        response = await fetch("/api/payments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            studentId: selectedStudent.id,
-            paymentType: formData.paymentType,
-            amount: parseInt(formData.amount),
-            paymentMethod: formData.paymentMethod,
-            status: formData.status,
-            notes: formData.notes,
-          }),
-        });
-      }
+      const response = await fetch("/api/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: selectedStudent.id,
+          paymentType: formData.paymentType,
+          amount: parsedAmount,
+          paymentMethod: formData.paymentMethod,
+          status: formData.status,
+          notes: formData.notes,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error("Failed to create payment");
@@ -146,7 +132,6 @@ export default function InputPembayaranPage() {
         paymentMethod: "Tunai",
         status: "BERHASIL",
         notes: "",
-        proofFile: null,
       });
       setSelectedStudent(null);
       setSearchStudent("");
@@ -298,55 +283,10 @@ export default function InputPembayaranPage() {
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
             >
-              <option>BERHASIL</option>
-              <option>GAGAL</option>
-              <option>PENDING</option>
+              <option value="BERHASIL">Berhasil</option>
+              <option value="MENUNGGAK">Nunggak</option>
             </select>
           </div>
-        </div>
-
-        {/* File Upload */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Bukti Transfer (opsional)
-          </label>
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 cursor-pointer transition-colors"
-          >
-            <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-sm text-gray-600">
-              Klik untuk upload atau drag & drop file (opsional)
-            </p>
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              setFormData((prev) => ({ ...prev, proofFile: file }));
-            }}
-          />
-
-          {formData.proofFile && (
-            <div className="mt-3 flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2">
-              <div className="truncate text-sm text-gray-800">
-                {formData.proofFile.name}
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setFormData((prev) => ({ ...prev, proofFile: null }))
-                }
-                className="text-sm text-red-600 hover:underline ml-4"
-              >
-                Hapus
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Notes */}
