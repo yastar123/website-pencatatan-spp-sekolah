@@ -1,0 +1,110 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  name      String
+  role      String     @default("SISWA") // BENDAHARA or SISWA
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  studentId String?    @unique
+  student   Student?   @relation(fields: [studentId], references: [id])
+}
+
+model Student {
+  id        String   @id @default(cuid())
+  nis       String   @unique
+  name      String
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id])
+  address   String?
+  phoneOrangTua String?
+  status    String   @default("MENUNGGAK") // LUNAS or MENUNGGAK
+  user      User?
+  payments  Payment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Class {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  academicYearId  String
+  academicYear    AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  students        Student[]
+  sppRates        SPPRate[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  year      String   @unique // e.g., "2023/2024"
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(true)
+  classes   Class[]
+  batches   Batch[]
+  sppRates  SPPRate[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SPPRate {
+  id              String   @id @default(cuid())
+  classId         String
+  class           Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  academicYearId  String
+  academicYear    AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  amount          Int      // in Rp
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  transactionNo   String   @unique @default(cuid())
+  paymentType     String   // "SPP", "Uang Buku", etc.
+  amount          Int      // in Rp
+  paymentMethod   String   // "Transfer Bank", "Tunai", etc.
+  status          String   @default("BERHASIL") // BERHASIL, GAGAL, PENDING, MENUNGGAK
+  proofUrl        String?  // path to uploaded proof file
+  batchId         String?  // for grouping monthly payments
+  batch           Batch?   @relation(fields: [batchId], references: [id])
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  createdBy       String?
+}
+
+model Batch {
+  id              String   @id @default(cuid())
+  month           Int      // 1-12
+  year            Int      // 2023
+  academicYearId  String
+  academicYear    AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  payments        Payment[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model BackupLog {
+  id        String   @id @default(cuid())
+  filename  String
+  size      Int
+  createdAt DateTime @default(now())
+}
