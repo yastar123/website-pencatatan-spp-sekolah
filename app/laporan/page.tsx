@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatRupiah } from "@/lib/utils";
-import { Download } from "lucide-react";
+import { Download, FileDown } from "lucide-react";
+import ExportLaporanModal from "@/components/modals/export-laporan-modal";
 import {
   BarChart,
   Bar,
@@ -319,6 +320,7 @@ export default function LaporanPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("all");
   const [selectedClass, setSelectedClass] = useState("all");
+  const [exportModalOpen, setExportModalOpen] = useState(false);
 
   // Load academic years, then set selectedYear to the active year (or first year)
   useEffect(() => {
@@ -391,85 +393,88 @@ export default function LaporanPage() {
         <p className="text-gray-600 mt-1">Analisis data pembayaran SPP</p>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-lg border border-gray-200 flex flex-col sm:flex-row gap-4 items-end">
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Periode
-          </label>
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-          >
-            {academicYears.map((year) => (
-              <option key={year.id} value={year.year}>
-                {year.year}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Export Laporan Detail — tombol utama */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Bulan
-          </label>
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg"
-          >
-            <option value="all">Semua Bulan</option>
-            <option value="1">Januari</option>
-            <option value="2">Februari</option>
-            <option value="3">Maret</option>
-            <option value="4">April</option>
-            <option value="5">Mei</option>
-            <option value="6">Juni</option>
-            <option value="7">Juli</option>
-            <option value="8">Agustus</option>
-            <option value="9">September</option>
-            <option value="10">Oktober</option>
-            <option value="11">November</option>
-            <option value="12">Desember</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Kelas
-          </label>
-          <select
-            value={selectedClass}
-            onChange={(e) => setSelectedClass(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg"
-          >
-            <option value="all">Semua Kelas</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <p className="font-semibold text-gray-900">Export Laporan Detail</p>
+          <p className="text-gray-500 text-sm mt-0.5">
+            Export data siswa &amp; status pembayaran per bulan, per tahun, per
+            kelas, atau per siswa
+          </p>
         </div>
         <button
-          onClick={() =>
-            reportData && downloadLaporanPDF(reportData, selectedYear)
-          }
-          disabled={!reportData}
-          className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => setExportModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm whitespace-nowrap shrink-0"
         >
-          <Download size={20} />
-          Cetak PDF
+          <FileDown size={16} />
+          Export Laporan
         </button>
-        <button
-          onClick={() =>
-            reportData && downloadLaporanExcel(reportData, selectedYear)
-          }
-          disabled={!reportData}
-          className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Download size={20} />
-          Export Excel
-        </button>
+      </div>
+
+      {/* Filters — ringkasan grafik */}
+      <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <p className="text-xs text-gray-500 font-medium mb-3 uppercase tracking-wide">
+          Ringkasan Grafik
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4 items-end">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Periode
+            </label>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+            >
+              {academicYears.map((year) => (
+                <option key={year.id} value={year.year}>
+                  {year.year}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Bulan
+            </label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg"
+            >
+              <option value="all">Semua Bulan</option>
+              <option value="1">Januari</option>
+              <option value="2">Februari</option>
+              <option value="3">Maret</option>
+              <option value="4">April</option>
+              <option value="5">Mei</option>
+              <option value="6">Juni</option>
+              <option value="7">Juli</option>
+              <option value="8">Agustus</option>
+              <option value="9">September</option>
+              <option value="10">Oktober</option>
+              <option value="11">November</option>
+              <option value="12">Desember</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Kelas
+            </label>
+            <select
+              value={selectedClass}
+              onChange={(e) => setSelectedClass(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg"
+            >
+              <option value="all">Semua Kelas</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {reportData && (
@@ -586,6 +591,15 @@ export default function LaporanPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Export Laporan Modal */}
+      {exportModalOpen && (
+        <ExportLaporanModal
+          onClose={() => setExportModalOpen(false)}
+          academicYears={academicYears}
+          classes={classes}
+        />
       )}
     </div>
   );

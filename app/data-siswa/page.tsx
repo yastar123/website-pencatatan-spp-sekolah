@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { Search, Plus, Edit2, Trash2 } from "lucide-react";
+import { Search, Plus, Edit2, Trash2, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StudentModal from "@/components/modals/student-modal";
+import ImportStudentsModal from "@/components/modals/import-students-modal";
 
 interface Student {
   id: string;
@@ -42,6 +43,7 @@ export default function DataSiswaPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Fetch classes
   useEffect(() => {
@@ -122,16 +124,25 @@ export default function DataSiswaPage() {
           <p className="text-gray-600 mt-1">Kelola data siswa sekolah</p>
         </div>
         {user?.role === "BENDAHARA" && (
-          <Button
-            onClick={() => {
-              setSelectedStudent(null);
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
-          >
-            <Plus size={20} />
-            Tambah Siswa
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+            >
+              <FileSpreadsheet size={18} />
+              Import Excel
+            </Button>
+            <Button
+              onClick={() => {
+                setSelectedStudent(null);
+                setModalOpen(true);
+              }}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
+            >
+              <Plus size={20} />
+              Tambah Siswa
+            </Button>
+          </div>
         )}
       </div>
 
@@ -200,9 +211,6 @@ export default function DataSiswaPage() {
                     Kelas
                   </th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-700">
-                    Alamat
-                  </th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-700">
                     Status Pembayaran
                   </th>
                   {user?.role === "BENDAHARA" && (
@@ -238,12 +246,6 @@ export default function DataSiswaPage() {
                       </td>
                       <td className="py-3 px-4 text-gray-600">
                         {student.class?.name || "-"}
-                      </td>
-                      <td
-                        className="py-3 px-4 text-gray-600 max-w-[180px] truncate"
-                        title={student.address || "-"}
-                      >
-                        {student.address || "-"}
                       </td>
                       <td className="py-3 px-4">
                         <span
@@ -370,13 +372,21 @@ export default function DataSiswaPage() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal Tambah/Edit */}
       {modalOpen && (
         <StudentModal
           student={selectedStudent}
           classes={classes}
           onClose={handleModalClose}
           onSave={handleStudentSaved}
+        />
+      )}
+
+      {/* Modal Import Excel */}
+      {importOpen && (
+        <ImportStudentsModal
+          onClose={() => setImportOpen(false)}
+          onDone={() => setPagination((prev) => ({ ...prev, page: 1 }))}
         />
       )}
     </div>

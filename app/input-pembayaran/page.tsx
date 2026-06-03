@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -16,21 +16,49 @@ interface Student {
   status: string;
 }
 
+interface Debt {
+  id: string;
+  paymentType: string;
+  amount: number;
+  createdAt: string;
+  notes?: string;
+}
+
 interface SPPRate {
   id: string;
   amount: number;
   classId: string;
 }
 
+/** Hitung alokasi FIFO dari daftar tunggakan + nominal bayar */
+function computeAllocation(debts: Debt[], payAmount: number) {
+  let remaining = payAmount;
+  return debts.map((debt) => {
+    if (remaining <= 0)
+      return { ...debt, coveredAmount: 0, status: "belum" as const };
+    if (remaining >= debt.amount) {
+      remaining -= debt.amount;
+      return { ...debt, coveredAmount: debt.amount, status: "lunas" as const };
+    }
+    const partial = remaining;
+    remaining = 0;
+    return { ...debt, coveredAmount: partial, status: "sebagian" as const };
+  });
+}
+
 export default function InputPembayaranPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+
   const [students, setStudents] = useState<Student[]>([]);
   const [sppRates, setSppRates] = useState<SPPRate[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [debts, setDebts] = useState<Debt[]>([]);
+  const [loadingDebts, setLoadingDebts] = useState(false);
   const [searchStudent, setSearchStudent] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   const [formData, setFormData] = useState({
     paymentType: "PMS",
@@ -41,24 +69,43 @@ export default function InputPembayaranPage() {
   });
 
   useEffect(() => {
-    if (loading) return; // wait for auth check to finish
+    if (loading) return;
+    if (user?.role !== "BENDAHARA") router.push("/dashboard");
 
-    if (user?.role !== "BENDAHARA") {
-      router.push("/dashboard");
+    fetch("/api/spp-rates")
+      .then((r) => r.json())
+      .then((d) => setSppRates(d.rates || []))
+      .catch(console.error);
+  }, [user, router, loading]);
+
+  // Fetch tunggakan saat siswa dipilih (filter by paymentType)
+  const fetchDebts = async (studentId: string) => {
+    setLoadingDebts(true);
+    try {
+      const res = await fetch(
+        `/api/payments?studentId=${studentId}&status=MENUNGGAK&page=1&paymentType=${encodeURIComponent(
+          formData.paymentType,
+        )}`,
+      );
+      const data = await res.json();
+      // Sort oldest first
+      const sorted = (data.payments || []).sort(
+        (a: Debt, b: Debt) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+      setDebts(sorted);
+    } catch (e) {
+      console.error("Failed to fetch debts", e);
+    } finally {
+      setLoadingDebts(false);
     }
+  };
 
-    const fetchSPPRates = async () => {
-      try {
-        const res = await fetch("/api/spp-rates");
-        const data = await res.json();
-        setSppRates(data.rates || []);
-      } catch (error) {
-        console.error("Failed to fetch SPP rates:", error);
-      }
-    };
-
-    fetchSPPRates();
-  }, [user, router]);
+  // Refetch debts when selected student or payment type changes
+  useEffect(() => {
+    if (selectedStudent) fetchDebts(selectedStudent.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStudent, formData.paymentType]);
 
   const handleSearchStudent = async (query: string) => {
     setSearchStudent(query);
@@ -66,13 +113,12 @@ export default function InputPembayaranPage() {
       setStudents([]);
       return;
     }
-
     try {
       const res = await fetch(`/api/students?search=${query}`);
       const data = await res.json();
       setStudents(data.students || []);
-    } catch (error) {
-      console.error("Failed to search students:", error);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -80,15 +126,25 @@ export default function InputPembayaranPage() {
     setSelectedStudent(student);
     setSearchStudent(student.name);
     setStudents([]);
+    setDebts([]);
+    setSuccessMsg("");
 
-    // Auto-fill amount based on SPP rate
+    // Auto-fill nominal berdasarkan SPP rate
     const rate = sppRates.find(
       (r) => r.classId === student.class?.id || r.classId === student.classId,
     );
-    if (rate) {
+    if (rate)
       setFormData((prev) => ({ ...prev, amount: rate.amount.toString() }));
-    }
+
+    fetchDebts(student.id);
   };
+
+  const totalDebt = debts.reduce((s, d) => s + d.amount, 0);
+  const parsedAmount = parseInt(formData.amount) || 0;
+  const allocation =
+    formData.status === "BERHASIL" && debts.length > 0
+      ? computeAllocation(debts, parsedAmount)
+      : [];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,19 +152,17 @@ export default function InputPembayaranPage() {
       setError("Silakan pilih siswa terlebih dahulu");
       return;
     }
-
-    // Validasi nominal
-    const parsedAmount = parseInt(formData.amount);
-    if (!formData.amount || isNaN(parsedAmount) || parsedAmount <= 0) {
+    if (!formData.amount || parsedAmount <= 0) {
       setError("Nominal pembayaran harus diisi dan lebih dari 0");
       return;
     }
 
     setError("");
+    setSuccessMsg("");
     setSubmitting(true);
 
     try {
-      const response = await fetch("/api/payments", {
+      const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -121,11 +175,17 @@ export default function InputPembayaranPage() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to create payment");
-      }
+      if (!res.ok) throw new Error("Gagal menyimpan pembayaran");
+      const result = await res.json();
 
-      // Reset form to current defaults
+      const closedCount = result.closedDebts?.length ?? 0;
+      setSuccessMsg(
+        closedCount > 0
+          ? `Pembayaran berhasil dicatat. ${closedCount} tunggakan terlama otomatis dilunasi.`
+          : "Pembayaran berhasil dicatat.",
+      );
+
+      // Reset form
       setFormData({
         paymentType: "PMS",
         amount: "",
@@ -135,8 +195,7 @@ export default function InputPembayaranPage() {
       });
       setSelectedStudent(null);
       setSearchStudent("");
-
-      alert("Pembayaran berhasil dicatat");
+      setDebts([]);
       router.refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -145,26 +204,38 @@ export default function InputPembayaranPage() {
     }
   };
 
+  const fmtRp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
+  const fmtTgl = (d: string) =>
+    new Date(d).toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Input Pembayaran</h1>
         <p className="text-gray-600 mt-1">Catat pembayaran SPP siswa</p>
       </div>
 
-      {/* Form */}
       <form
         onSubmit={handleSubmit}
         className="bg-white p-6 rounded-lg border border-gray-200 space-y-6"
       >
         {error && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
             {error}
           </div>
         )}
+        {successMsg && (
+          <div className="flex gap-2 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+            <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+            {successMsg}
+          </div>
+        )}
 
-        {/* Student Search */}
+        {/* ── Pilih Siswa ─────────────────────────────────────────────── */}
         <div>
           <label className="block text-sm font-semibold text-gray-900 mb-3">
             Pilih Siswa
@@ -178,20 +249,18 @@ export default function InputPembayaranPage() {
               onChange={(e) => handleSearchStudent(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
             />
-
-            {/* Dropdown Results */}
             {students.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-300 rounded-lg shadow-lg z-10">
-                {students.map((student) => (
+                {students.map((s) => (
                   <button
-                    key={student.id}
+                    key={s.id}
                     type="button"
-                    onClick={() => handleSelectStudent(student)}
+                    onClick={() => handleSelectStudent(s)}
                     className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
                   >
-                    <p className="font-medium text-gray-900">{student.name}</p>
+                    <p className="font-medium text-gray-900">{s.name}</p>
                     <p className="text-sm text-gray-600">
-                      NIS: {student.nis} | Kelas: {student.class?.name ?? "-"}
+                      NIS: {s.nis} | Kelas: {s.class?.name ?? "-"}
                     </p>
                   </button>
                 ))}
@@ -199,7 +268,7 @@ export default function InputPembayaranPage() {
             )}
           </div>
 
-          {/* Selected Student Info */}
+          {/* Info siswa terpilih */}
           {selectedStudent && (
             <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-gray-600">Siswa Terpilih:</p>
@@ -211,17 +280,94 @@ export default function InputPembayaranPage() {
                 {selectedStudent.class?.name ?? "-"}
               </p>
               <p
-                className={`text-sm font-medium mt-2 ${selectedStudent.status === "LUNAS" ? "text-green-600" : "text-red-600"}`}
+                className={`text-sm font-medium mt-1 ${selectedStudent.status === "LUNAS" ? "text-green-600" : "text-red-600"}`}
               >
-                Status: {selectedStudent.status}
+                Status:{" "}
+                {selectedStudent.status === "LUNAS" ? "Lunas" : "Nunggak"}
               </p>
+            </div>
+          )}
+
+          {/* ── Daftar Tunggakan ───────────────────────────────────────── */}
+          {selectedStudent && loadingDebts && (
+            <div className="mt-3 text-sm text-gray-500">
+              Memuat tunggakan...
+            </div>
+          )}
+
+          {selectedStudent && !loadingDebts && debts.length > 0 && (
+            <div className="mt-4 border border-orange-200 rounded-lg overflow-hidden">
+              <div className="bg-orange-50 px-4 py-2 flex items-center gap-2">
+                <AlertCircle size={16} className="text-orange-500" />
+                <span className="text-sm font-semibold text-orange-800">
+                  Ada {debts.length} tunggakan · Total {fmtRp(totalDebt)}
+                </span>
+              </div>
+              <div className="divide-y divide-orange-100">
+                {debts.map((debt, idx) => {
+                  const alloc = allocation[idx];
+                  return (
+                    <div
+                      key={debt.id}
+                      className="px-4 py-2.5 flex items-center justify-between bg-white text-sm"
+                    >
+                      <div>
+                        <span className="text-gray-700 font-medium">
+                          {debt.paymentType}
+                        </span>
+                        <span className="text-gray-400 ml-2 text-xs">
+                          {fmtTgl(debt.createdAt)}
+                        </span>
+                        {debt.notes && (
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {debt.notes}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-red-600">
+                          {fmtRp(debt.amount)}
+                        </p>
+                        {/* Preview alokasi */}
+                        {alloc && parsedAmount > 0 && (
+                          <p
+                            className={`text-xs font-medium mt-0.5 ${
+                              alloc.status === "lunas"
+                                ? "text-green-600"
+                                : alloc.status === "sebagian"
+                                  ? "text-yellow-600"
+                                  : "text-gray-400"
+                            }`}
+                          >
+                            {alloc.status === "lunas" && "✓ Akan dilunasi"}
+                            {alloc.status === "sebagian" &&
+                              `≈ Dibayar ${fmtRp(alloc.coveredAmount)}`}
+                            {alloc.status === "belum" && "○ Belum tertutup"}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Tombol bantu: isi nominal sesuai total tunggakan */}
+              <div className="bg-orange-50 px-4 py-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFormData((f) => ({ ...f, amount: totalDebt.toString() }))
+                  }
+                  className="text-xs text-orange-700 hover:underline font-medium"
+                >
+                  Isi nominal = total tunggakan ({fmtRp(totalDebt)})
+                </button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Payment Details */}
+        {/* ── Detail Pembayaran ────────────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Payment Type */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Jenis Pembayaran *
@@ -238,7 +384,6 @@ export default function InputPembayaranPage() {
             </select>
           </div>
 
-          {/* Amount */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Nominal Bayar *
@@ -254,7 +399,6 @@ export default function InputPembayaranPage() {
             />
           </div>
 
-          {/* Payment Method */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Metode Pembayaran *
@@ -271,7 +415,6 @@ export default function InputPembayaranPage() {
             </select>
           </div>
 
-          {/* Status */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Status Pembayaran *
@@ -289,7 +432,28 @@ export default function InputPembayaranPage() {
           </div>
         </div>
 
-        {/* Notes */}
+        {/* Info alokasi total */}
+        {formData.status === "BERHASIL" &&
+          debts.length > 0 &&
+          parsedAmount > 0 && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+              💡 Pembayaran {fmtRp(parsedAmount)} akan otomatis menutup
+              tunggakan paling lama terlebih dahulu.
+              {parsedAmount >= totalDebt ? (
+                <span className="font-semibold">
+                  {" "}
+                  Semua tunggakan akan lunas!
+                </span>
+              ) : (
+                <span>
+                  {" "}
+                  Sisa tunggakan setelah pembayaran:{" "}
+                  <strong>{fmtRp(totalDebt - parsedAmount)}</strong>
+                </span>
+              )}
+            </div>
+          )}
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Catatan
@@ -301,15 +465,14 @@ export default function InputPembayaranPage() {
             }
             placeholder="Catatan tambahan (opsional)"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 resize-none"
-            rows={4}
+            rows={3}
           />
         </div>
 
-        {/* Submit Button */}
         <Button
           type="submit"
           disabled={submitting || !selectedStudent}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg transition-colors"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg"
         >
           {submitting ? "Menyimpan..." : "Simpan Pembayaran"}
         </Button>
