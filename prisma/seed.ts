@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import * as Prisma from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-const prisma = new PrismaClient();
+const prisma = new Prisma.PrismaClient();
 
 async function hashPassword(password: string): Promise<string> {
   const salt = await bcrypt.genSalt(10);
@@ -56,7 +56,7 @@ async function main() {
       },
     }),
   ]);
-  console.log("Created classes:", classes.map((c) => c.name).join(", "));
+  console.log("Created classes:", classes.map((c: any) => c.name).join(", "));
 
   // Create SPP Rates
   const sppRate = await prisma.sPPRate.create({
@@ -101,7 +101,7 @@ async function main() {
       },
     }),
   ]);
-  console.log("Created students:", students.map((s) => s.name).join(", "));
+  console.log("Created students:", students.map((s: any) => s.name).join(", "));
 
   // Create Users
   const bendaharaPassword = await hashPassword("bendahara123");
