@@ -28,12 +28,8 @@ interface StudentItem {
 
 const EXPORT_TYPES = [
   { value: "bulan-semua", label: "Per Bulan — Semua Kelas" },
-  { value: "bulan-kelas", label: "Per Bulan — Kelas Tertentu" },
   { value: "bulan-siswa", label: "Per Bulan — Siswa Tertentu" },
   { value: "tahun-semua", label: "Per Tahun — Semua Kelas" },
-  { value: "tahun-kelas", label: "Per Tahun — Kelas Tertentu" },
-  { value: "tahun-siswa", label: "Per Tahun — Siswa Tertentu" },
-  { value: "siswa-pendidikan", label: "Siswa Selama Pendidikan" },
 ] as const;
 type ExportType = (typeof EXPORT_TYPES)[number]["value"];
 
@@ -96,13 +92,10 @@ export default function ExportLaporanModal({
   const [loadingXls, setLoadingXls] = useState(false);
   const [error, setError] = useState("");
 
-  const isPerbulan = type.startsWith("bulan");
-  const isPertahun = type.startsWith("tahun");
-  const needsClass = type === "bulan-kelas" || type === "tahun-kelas";
-  const needsStudent =
-    type === "bulan-siswa" ||
-    type === "tahun-siswa" ||
-    type === "siswa-pendidikan";
+  const isPerbulan = type === "bulan-semua" || type === "bulan-siswa";
+  const isPertahun = type === "tahun-semua";
+  const needsClass = false; // feature removed
+  const needsStudent = type === "bulan-siswa";
   const filteredClasses = isPertahun
     ? classes.filter((c) => c.academicYearId === academicYearId)
     : classes;
@@ -186,6 +179,26 @@ export default function ExportLaporanModal({
     setError("");
     setLoadingXls(true);
     try {
+      // If user requested server-side XLSX export for per-year
+      if (type === "tahun-semua") {
+        const params = new URLSearchParams();
+        const ay = academicYears.find((y) => y.id === academicYearId);
+        if (!ay) throw new Error("Pilih tahun ajaran terlebih dahulu");
+        params.set("year", ay.year);
+        const res = await fetch(`/api/reports/export?${params.toString()}`);
+        if (!res.ok) throw new Error("Gagal mengunduh export");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `laporan-${ay.year.replace("/", "-")}-all.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
       const apiRows = await fetchRows();
       const XLSX = await import("xlsx");
       const { title, safeFilename, monthLabel } = buildMeta();
@@ -233,18 +246,42 @@ export default function ExportLaporanModal({
         d.push([]);
         d.push(["", "", "", "TOTAL BAYAR", s?.totalBayar ?? 0, "", ""]);
       } else if (isPertahun) {
-        // Format B: grid bulan
+        // Format B: grid bulan (academic year order: JULI → JUNI)
+        const monthsOrder = [7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6];
+        const monthsLabels = [
+          "Jul",
+          "Agu",
+          "Sep",
+          "Okt",
+          "Nov",
+          "Des",
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "Mei",
+          "Jun",
+        ];
+
         const hdr = ["No", "NIS", "NISN", "Nama Siswa"];
         if (withKelas) hdr.push("Kelas");
-        hdr.push(...MONTHS_SHORT, "Total (Rp)", "Status");
+        hdr.push(...monthsLabels, "Total (Rp)", "Status");
         d.push(hdr);
         let grand = 0;
         apiRows.forEach((r: any, i: number) => {
           const mon = Array(12).fill(0);
-          r.payments
+          (r.payments || [])
             .filter((p: any) => p.status === "BERHASIL")
             .forEach((p: any) => {
-              mon[new Date(p.createdAt).getMonth()] += p.amount;
+              // Prefer batch.month when available and it belongs to the selected academic year
+              let monthNum: number;
+              if (p.batch && p.batch.month) {
+                monthNum = p.batch.month;
+              } else {
+                monthNum = new Date(p.createdAt).getMonth() + 1;
+              }
+              const idx = monthsOrder.indexOf(monthNum);
+              if (idx >= 0) mon[idx] += p.amount;
             });
           const row: any[] = [i + 1, r.nis, r.nisn, r.name];
           if (withKelas) row.push(r.className);

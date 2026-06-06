@@ -22,6 +22,7 @@ interface Debt {
   amount: number;
   createdAt: string;
   notes?: string;
+  batch?: { month: number; year: number } | null;
 }
 
 interface SPPRate {
@@ -52,20 +53,39 @@ export default function InputPembayaranPage() {
 
   const [students, setStudents] = useState<Student[]>([]);
   const [sppRates, setSppRates] = useState<SPPRate[]>([]);
+  const [activeAcademicYear, setActiveAcademicYear] = useState<{
+    id?: string;
+    year?: string;
+    startDate?: string;
+    endDate?: string;
+  } | null>(null);
+  const [yearOptions, setYearOptions] = useState<number[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [paidMonths, setPaidMonths] = useState<
+    { month: number; year: number }[]
+  >([]);
+  const [monthStatusList, setMonthStatusList] = useState<
+    {
+      month: number;
+      year: number;
+      status: "paid" | "debt" | "none";
+    }[]
+  >([]);
   const [loadingDebts, setLoadingDebts] = useState(false);
   const [searchStudent, setSearchStudent] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  const currentDate = new Date();
   const [formData, setFormData] = useState({
     paymentType: "PMS",
     amount: "",
     paymentMethod: "Tunai",
     status: "BERHASIL",
     notes: "",
+    // month/year intentionally omitted: payments allocate automatically (FIFO)
   });
 
   useEffect(() => {
@@ -76,26 +96,114 @@ export default function InputPembayaranPage() {
       .then((r) => r.json())
       .then((d) => setSppRates(d.rates || []))
       .catch(console.error);
+
+    // fetch active academic year to limit year options
+    fetch("/api/academic-years")
+      .then((r) => r.json())
+      .then((d) => {
+        const ay = d.activeYear || null;
+        setActiveAcademicYear(ay);
+        if (ay && ay.startDate && ay.endDate) {
+          const start = new Date(ay.startDate).getFullYear();
+          const end = new Date(ay.endDate).getFullYear();
+          const opts: number[] = [];
+          for (let y = start; y <= end; y++) opts.push(y);
+          setYearOptions(opts);
+        } else {
+          // fallback: last 5 years
+          const currentDate = new Date();
+          setYearOptions(
+            Array.from(
+              { length: 5 },
+              (_, i) => currentDate.getFullYear() - 2 + i,
+            ),
+          );
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to fetch academic years", e);
+      });
   }, [user, router, loading]);
 
-  // Fetch tunggakan saat siswa dipilih (filter by paymentType)
+  // Fetch payments (paid + tunggakan) when a student is selected
   const fetchDebts = async (studentId: string) => {
     setLoadingDebts(true);
     try {
+      // Map UI payment types to stored paymentType values (PMS -> SPP)
+      const paymentTypeQuery =
+        formData.paymentType === "PMS" ? "SPP" : formData.paymentType;
       const res = await fetch(
-        `/api/payments?studentId=${studentId}&status=MENUNGGAK&page=1&paymentType=${encodeURIComponent(
-          formData.paymentType,
-        )}`,
+        `/api/payments?studentId=${studentId}&paymentType=${encodeURIComponent(
+          paymentTypeQuery,
+        )}&page=1&limit=1000`,
       );
       const data = await res.json();
-      // Sort oldest first
-      const sorted = (data.payments || []).sort(
-        (a: Debt, b: Debt) =>
-          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      );
-      setDebts(sorted);
+
+      const all: any[] = data.payments || [];
+
+      // Separate tunggakan (MENUNGGAK)
+      const tunggakan = all
+        .filter((p) => p.status === "MENUNGGAK")
+        .sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+
+      // build maps for paid and debt by year-month key
+      const paidMap = new Map<string, { month: number; year: number }>();
+      const debtMap = new Map<string, { month: number; year: number }>();
+
+      all.forEach((p) => {
+        let month: number;
+        let year: number;
+        if (p.batch && p.batch.month && p.batch.year) {
+          month = p.batch.month;
+          year = p.batch.year;
+        } else {
+          const dt = new Date(p.createdAt);
+          month = dt.getMonth() + 1;
+          year = dt.getFullYear();
+        }
+        const key = `${year}-${String(month).padStart(2, "0")}`;
+        if (p.status === "BERHASIL") {
+          if (!paidMap.has(key)) paidMap.set(key, { month, year });
+        }
+        if (p.status === "MENUNGGAK") {
+          if (!debtMap.has(key)) debtMap.set(key, { month, year });
+        }
+      });
+
+      setDebts(tunggakan);
+      setPaidMonths(Array.from(paidMap.values()));
+
+      // Build monthStatusList using active academic year range if available
+      const ayRes = await fetch(`/api/academic-years`);
+      const ayData = await ayRes.json();
+      const active = ayData.activeYear;
+      const monthsList: {
+        month: number;
+        year: number;
+        status: "paid" | "debt" | "none";
+      }[] = [];
+      if (active && active.startDate && active.endDate) {
+        const start = new Date(active.startDate);
+        const end = new Date(active.endDate);
+        const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+        while (cur <= end) {
+          const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`;
+          const isPaid = paidMap.has(key);
+          const isDebt = debtMap.has(key);
+          monthsList.push({
+            month: cur.getMonth() + 1,
+            year: cur.getFullYear(),
+            status: isPaid ? "paid" : isDebt ? "debt" : "none",
+          });
+          cur.setMonth(cur.getMonth() + 1);
+        }
+      }
+      setMonthStatusList(monthsList);
     } catch (e) {
-      console.error("Failed to fetch debts", e);
+      console.error("Failed to fetch debts/payments", e);
     } finally {
       setLoadingDebts(false);
     }
@@ -129,7 +237,7 @@ export default function InputPembayaranPage() {
     setDebts([]);
     setSuccessMsg("");
 
-    // Auto-fill nominal berdasarkan SPP rate
+    // Auto-fill nominal berdasarkan PMS rate
     const rate = sppRates.find(
       (r) => r.classId === student.class?.id || r.classId === student.classId,
     );
@@ -172,6 +280,7 @@ export default function InputPembayaranPage() {
           paymentMethod: formData.paymentMethod,
           status: formData.status,
           notes: formData.notes,
+          // month/year intentionally omitted so server allocates FIFO
         }),
       });
 
@@ -192,6 +301,7 @@ export default function InputPembayaranPage() {
         paymentMethod: "Tunai",
         status: "BERHASIL",
         notes: "",
+        // month/year omitted
       });
       setSelectedStudent(null);
       setSearchStudent("");
@@ -216,7 +326,7 @@ export default function InputPembayaranPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Input Pembayaran</h1>
-        <p className="text-gray-600 mt-1">Catat pembayaran SPP siswa</p>
+        <p className="text-gray-600 mt-1">Catat pembayaran PMS siswa</p>
       </div>
 
       <form
@@ -235,7 +345,7 @@ export default function InputPembayaranPage() {
           </div>
         )}
 
-        {/* ── Pilih Siswa ─────────────────────────────────────────────── */}
+        {/* -- Pilih Siswa -- */}
         <div>
           <label className="block text-sm font-semibold text-gray-900 mb-3">
             Pilih Siswa
@@ -288,85 +398,129 @@ export default function InputPembayaranPage() {
             </div>
           )}
 
-          {/* ── Daftar Tunggakan ───────────────────────────────────────── */}
+          {/* -- Daftar Tunggakan -- */}
           {selectedStudent && loadingDebts && (
             <div className="mt-3 text-sm text-gray-500">
               Memuat tunggakan...
             </div>
           )}
 
-          {selectedStudent && !loadingDebts && debts.length > 0 && (
-            <div className="mt-4 border border-orange-200 rounded-lg overflow-hidden">
-              <div className="bg-orange-50 px-4 py-2 flex items-center gap-2">
-                <AlertCircle size={16} className="text-orange-500" />
-                <span className="text-sm font-semibold text-orange-800">
-                  Ada {debts.length} tunggakan · Total {fmtRp(totalDebt)}
-                </span>
-              </div>
-              <div className="divide-y divide-orange-100">
-                {debts.map((debt, idx) => {
-                  const alloc = allocation[idx];
-                  return (
-                    <div
-                      key={debt.id}
-                      className="px-4 py-2.5 flex items-center justify-between bg-white text-sm"
+          {selectedStudent &&
+            !loadingDebts &&
+            (debts.length > 0 ||
+              paidMonths.length > 0 ||
+              monthStatusList.length > 0) && (
+              <>
+                <div className="px-4 py-3">
+                  <p className="text-sm text-gray-600 mb-2">
+                    Status per bulan untuk tahun ajaran aktif:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {monthStatusList.length === 0 ? (
+                      <span className="text-xs text-gray-500">
+                        Tidak ada data bulan
+                      </span>
+                    ) : (
+                      monthStatusList.map((m) => (
+                        <span
+                          key={`${m.year}-${m.month}`}
+                          className={`text-xs px-2 py-1 rounded ${
+                            m.status === "paid"
+                              ? "bg-green-50 text-green-700"
+                              : m.status === "debt"
+                                ? "bg-red-50 text-red-700"
+                                : "bg-gray-50 text-gray-600"
+                          }`}
+                        >
+                          {new Date(m.year, m.month - 1, 1).toLocaleString(
+                            "id-ID",
+                            {
+                              month: "short",
+                              year: "numeric",
+                            },
+                          )}
+                          {m.status === "paid" && " ✓"}
+                          {m.status === "debt" && " •"}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="mt-4 border border-orange-200 rounded-lg overflow-hidden">
+                  <div className="bg-orange-50 px-4 py-2 flex items-center gap-2">
+                    <AlertCircle size={16} className="text-orange-500" />
+                    <span className="text-sm font-semibold text-orange-800">
+                      Ada {debts.length} tunggakan · Total {fmtRp(totalDebt)}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-orange-100">
+                    {debts.map((debt, idx) => {
+                      const alloc = allocation[idx];
+                      return (
+                        <div
+                          key={debt.id}
+                          className="px-4 py-2.5 flex items-center justify-between bg-white text-sm"
+                        >
+                          <div>
+                            <span className="text-gray-700 font-medium">
+                              {debt.paymentType}
+                            </span>
+                            <span className="text-gray-400 ml-2 text-xs">
+                              {fmtTgl(debt.createdAt)}
+                            </span>
+                            {debt.notes && (
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {debt.notes}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="font-semibold text-red-600">
+                              {fmtRp(debt.amount)}
+                            </p>
+                            {/* Preview alokasi */}
+                            {alloc && parsedAmount > 0 && (
+                              <p
+                                className={`text-xs font-medium mt-0.5 ${
+                                  alloc.status === "lunas"
+                                    ? "text-green-600"
+                                    : alloc.status === "sebagian"
+                                      ? "text-yellow-600"
+                                      : "text-gray-400"
+                                }`}
+                              >
+                                {alloc.status === "lunas" && "✓ Akan dilunasi"}
+                                {alloc.status === "sebagian" &&
+                                  `≈ Dibayar ${fmtRp(alloc.coveredAmount)}`}
+                                {alloc.status === "belum" && "○ Belum tertutup"}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* Tombol bantu: isi nominal sesuai total tunggakan */}
+                  <div className="bg-orange-50 px-4 py-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((f) => ({
+                          ...f,
+                          amount: totalDebt.toString(),
+                        }))
+                      }
+                      className="text-xs text-orange-700 hover:underline font-medium"
                     >
-                      <div>
-                        <span className="text-gray-700 font-medium">
-                          {debt.paymentType}
-                        </span>
-                        <span className="text-gray-400 ml-2 text-xs">
-                          {fmtTgl(debt.createdAt)}
-                        </span>
-                        {debt.notes && (
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {debt.notes}
-                          </p>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-red-600">
-                          {fmtRp(debt.amount)}
-                        </p>
-                        {/* Preview alokasi */}
-                        {alloc && parsedAmount > 0 && (
-                          <p
-                            className={`text-xs font-medium mt-0.5 ${
-                              alloc.status === "lunas"
-                                ? "text-green-600"
-                                : alloc.status === "sebagian"
-                                  ? "text-yellow-600"
-                                  : "text-gray-400"
-                            }`}
-                          >
-                            {alloc.status === "lunas" && "✓ Akan dilunasi"}
-                            {alloc.status === "sebagian" &&
-                              `≈ Dibayar ${fmtRp(alloc.coveredAmount)}`}
-                            {alloc.status === "belum" && "○ Belum tertutup"}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Tombol bantu: isi nominal sesuai total tunggakan */}
-              <div className="bg-orange-50 px-4 py-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFormData((f) => ({ ...f, amount: totalDebt.toString() }))
-                  }
-                  className="text-xs text-orange-700 hover:underline font-medium"
-                >
-                  Isi nominal = total tunggakan ({fmtRp(totalDebt)})
-                </button>
-              </div>
-            </div>
-          )}
+                      Isi nominal = total tunggakan ({fmtRp(totalDebt)})
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
         </div>
 
-        {/* ── Detail Pembayaran ────────────────────────────────────────── */}
+        {/* -- Detail Pembayaran -- */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -384,17 +538,27 @@ export default function InputPembayaranPage() {
             </select>
           </div>
 
+          {/* Month/year removed: payments will auto-close oldest debts (FIFO) */}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Nominal Bayar *
             </label>
             <Input
-              type="number"
+              type="text"
               placeholder="Masukkan nominal"
-              value={formData.amount}
-              onChange={(e) =>
-                setFormData({ ...formData, amount: e.target.value })
+              value={
+                formData.amount
+                  ? new Intl.NumberFormat("id-ID").format(
+                      parseInt(formData.amount),
+                    )
+                  : ""
               }
+              onChange={(e) => {
+                // keep only digits in state, display formatted
+                const raw = e.target.value.replace(/\D/g, "");
+                setFormData({ ...formData, amount: raw });
+              }}
               required
             />
           </div>
@@ -412,6 +576,8 @@ export default function InputPembayaranPage() {
             >
               <option>Tunai</option>
               <option>Pip</option>
+              <option>Beasiswa</option>
+              <option>Prestasi</option>
             </select>
           </div>
 

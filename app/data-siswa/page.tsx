@@ -19,6 +19,8 @@ interface Student {
   address?: string;
   phoneOrangTua?: string;
   status?: string;
+  owedAmount?: number;
+  owedMonths?: number;
 }
 
 interface PaginationData {
@@ -255,11 +257,22 @@ export default function DataSiswaPage() {
                               : "bg-red-100 text-red-800"
                           }`}
                         >
-                          {student.status === "LUNAS"
-                            ? "Lunas"
-                            : student.status === "MENUNGGAK"
-                              ? "Nunggak"
-                              : student.status || "-"}
+                          {student.status === "LUNAS" ? (
+                            "Lunas"
+                          ) : student.status === "MENUNGGAK" ? (
+                            <>
+                              Nunggak
+                              {typeof student.owedAmount === "number" && (
+                                <span className="ml-2 text-xs font-normal">
+                                  · Rp{" "}
+                                  {student.owedAmount.toLocaleString("id-ID")} (
+                                  {student.owedMonths ?? 0} bulan)
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            student.status || "-"
+                          )}
                         </span>
                       </td>
                       {user?.role === "BENDAHARA" && (

@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search") || "";
     const classId = searchParams.get("classId") || "";
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = 10;
+    const limit = 50;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       where.classId = classId;
     }
 
-    const [students, total] = await Promise.all([
+    const [studentsRaw, total] = await Promise.all([
       prisma.student.findMany({
         where,
         include: { class: true },
@@ -39,6 +39,41 @@ export async function GET(request: NextRequest) {
       }),
       prisma.student.count({ where }),
     ]);
+
+    // enrich students with owedAmount and owedMonths (based on PMS/SPP unpaid payments and rate)
+    const activeYear =
+      (await prisma.academicYear.findFirst({ where: { active: true } })) ??
+      (await prisma.academicYear.findFirst({ orderBy: { createdAt: "desc" } }));
+
+    const students = await Promise.all(
+      studentsRaw.map(async (s) => {
+        // sum unpaid PMS/SPP payments
+        const agg = await prisma.payment.aggregate({
+          where: {
+            studentId: s.id,
+            status: "MENUNGGAK",
+            paymentType: { in: ["SPP", "PMS"] },
+          },
+          _sum: { amount: true },
+        });
+        const owedAmount = agg._sum.amount ?? 0;
+
+        // find applicable rate (prefer class.academicYearId else activeYear)
+        const ayId = s.class?.academicYearId || activeYear?.id || null;
+        let owedMonths = 0;
+        if (owedAmount > 0 && ayId) {
+          const rate = await prisma.sPPRate.findFirst({
+            where: { classId: s.classId, academicYearId: ayId },
+            orderBy: { createdAt: "desc" },
+          });
+          if (rate && rate.amount > 0) {
+            owedMonths = Math.ceil(owedAmount / rate.amount);
+          }
+        }
+
+        return { ...s, owedAmount, owedMonths };
+      }),
+    );
 
     return NextResponse.json({
       students,
@@ -81,6 +116,56 @@ export async function POST(request: NextRequest) {
       } as any,
       include: { class: true },
     });
+
+    // After creating student, create monthly tunggakan based on PMS/SPP rate for the student's class and academic year
+    try {
+      const cls = student.class;
+      if (cls?.academicYearId) {
+        const academicYear = await prisma.academicYear.findUnique({
+          where: { id: cls.academicYearId },
+        });
+        if (academicYear) {
+          const rate = await prisma.sPPRate.findFirst({
+            where: { classId: cls.id, academicYearId: academicYear.id },
+            orderBy: { createdAt: "desc" },
+          });
+          if (rate) {
+            // create a debt/payment entry for each month in the academic year
+            const start = new Date(academicYear.startDate);
+            const end = new Date(academicYear.endDate);
+            const ops: Promise<any>[] = [];
+            let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+            while (cur <= end) {
+              const monthName = cur.toLocaleString("id-ID", { month: "long" });
+              const yearNum = cur.getFullYear();
+              ops.push(
+                prisma.payment.create({
+                  data: {
+                    studentId: student.id,
+                    paymentType: "PMS",
+                    amount: rate.amount,
+                    paymentMethod: "-",
+                    status: "MENUNGGAK",
+                    notes: `Tunggakan PMS bulan ${monthName} ${yearNum}`,
+                    createdBy: session.userId,
+                  },
+                }),
+              );
+              // next month
+              cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+            }
+            await Promise.all(ops);
+            // ensure student status is MENUNGGAK
+            await prisma.student.update({
+              where: { id: student.id },
+              data: { status: "MENUNGGAK" },
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to create initial debts for student:", e);
+    }
 
     return NextResponse.json(student, { status: 201 });
   } catch (error) {

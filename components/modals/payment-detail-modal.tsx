@@ -126,11 +126,7 @@ export default function PaymentDetailModal({
           {/* Payment */}
           <div className="space-y-2">
             <Row label="Jenis Pembayaran" value={payment.paymentType} />
-            <Row
-              label="Nominal"
-              value={formatRupiah(payment.amount)}
-              bold
-            />
+            <Row label="Nominal" value={formatRupiah(payment.amount)} bold />
             <Row label="Metode Pembayaran" value={payment.paymentMethod} />
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-500 w-40 shrink-0">

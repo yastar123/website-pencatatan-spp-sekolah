@@ -30,7 +30,7 @@ const menuItems = [
   { icon: FileText, label: "Cek Tagihan", href: "/laporan/detail" },
   {
     icon: FileText,
-    label: "Set Nominal SPP",
+    label: "Set Nominal PMS",
     href: "/pengaturan/spp",
     adminOnly: true,
   },
@@ -78,12 +78,19 @@ export function Sidebar() {
         }`}
       >
         {/* Logo */}
-        <div className="p-6 border-b border-gray-200">
-          <Link
-            href="/dashboard"
-            className="flex items-center gap-3 font-bold text-xl text-gray-900"
-          >
-            <span className="hidden sm:inline">Schoboard</span>
+        <div className="p-4 border-b border-gray-200">
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <img
+              src="/logo.jpeg"
+              alt="SMK PGRI 4 Pasuruan"
+              className="h-10 w-10 object-contain rounded"
+            />
+            <div className="flex flex-col">
+              <span className="font-bold text-base text-gray-900">
+                SMK PGRI 4
+              </span>
+              <span className="text-sm text-gray-600">Pasuruan</span>
+            </div>
           </Link>
         </div>
 

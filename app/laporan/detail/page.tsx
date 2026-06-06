@@ -180,22 +180,47 @@ export default function LaporanDetailPage() {
                   <th className="text-left py-2 px-3">NIS</th>
                   <th className="text-left py-2 px-3">Nama</th>
                   <th className="text-left py-2 px-3">Kelas</th>
+                  <th className="text-center py-2 px-3">Bulan/Tahun</th>
                   <th className="text-right py-2 px-3">Total Bayar</th>
                   <th className="text-left py-2 px-3">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.studentId} className="border-b hover:bg-gray-50">
-                    <td className="py-2 px-3">{r.nis}</td>
-                    <td className="py-2 px-3">{r.name}</td>
-                    <td className="py-2 px-3">{r.className}</td>
-                    <td className="py-2 px-3 text-right font-semibold">
-                      {formatRupiah(r.totalBayar)}
-                    </td>
-                    <td className="py-2 px-3">{r.statusLabel}</td>
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const monthNames = [
+                    "",
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "Mei",
+                    "Jun",
+                    "Jul",
+                    "Agu",
+                    "Sep",
+                    "Okt",
+                    "Nov",
+                    "Des",
+                  ];
+                  const batchInfo =
+                    r.payments && r.payments.length > 0 && r.payments[0].batch
+                      ? `${monthNames[r.payments[0].batch.month] || r.payments[0].batch.month}/${r.payments[0].batch.year}`
+                      : "-";
+                  return (
+                    <tr key={r.studentId} className="border-b hover:bg-gray-50">
+                      <td className="py-2 px-3">{r.nis}</td>
+                      <td className="py-2 px-3">{r.name}</td>
+                      <td className="py-2 px-3">{r.className}</td>
+                      <td className="py-2 px-3 text-center text-sm text-gray-600">
+                        {batchInfo}
+                      </td>
+                      <td className="py-2 px-3 text-right font-semibold">
+                        {formatRupiah(r.totalBayar)}
+                      </td>
+                      <td className="py-2 px-3">{r.statusLabel}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {rows.length === 0 && (

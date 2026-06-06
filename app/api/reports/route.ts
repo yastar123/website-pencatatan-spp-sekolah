@@ -27,17 +27,46 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Filter payments by students whose class belongs to this academic year
-    // (avoids relying on createdAt date range which breaks for newly entered data)
-    const paymentWhere = {
+    // Accept optional filters: month (1-12) and classId
+    const monthParam = searchParams.get("month");
+    const classId = searchParams.get("classId");
+
+    // Base payment filter
+    let baseStudentFilter: any = { class: { academicYearId: academicYear.id } };
+    if (classId) baseStudentFilter = { classId };
+
+    // Build payment where clause and optionally narrow by month
+    const basePaymentWhere: any = {
       status: "BERHASIL",
-      student: { class: { academicYearId: academicYear.id } },
+      student: baseStudentFilter,
     };
 
-    // Get all matching payments for monthly breakdown
+    let paymentsWhere = basePaymentWhere;
+
+    if (monthParam) {
+      const monthInt = parseInt(monthParam, 10);
+      // Determine calendar year for the selected month within the academic year
+      const calendarYear = monthInt >= 7 ? academicYear.startDate.getFullYear() : academicYear.endDate.getFullYear();
+      const monthStart = new Date(calendarYear, monthInt - 1, 1);
+      const monthEnd = new Date(calendarYear, monthInt, 0, 23, 59, 59, 999);
+
+      paymentsWhere = {
+        ...basePaymentWhere,
+        OR: [
+          { batch: { academicYearId: academicYear.id, month: monthInt } },
+          { createdAt: { gte: monthStart, lte: monthEnd } },
+        ],
+      };
+    }
+
+    // Get all matching payments for monthly breakdown (include batch info)
     const payments = await prisma.payment.findMany({
-      where: paymentWhere,
-      select: { amount: true, createdAt: true },
+      where: paymentsWhere,
+      select: {
+        amount: true,
+        createdAt: true,
+        batch: { select: { month: true, year: true, academicYearId: true } },
+      },
     });
 
     // Process monthly data
@@ -58,8 +87,19 @@ export async function GET(request: NextRequest) {
     const monthlyData = Array(12).fill(0);
 
     payments.forEach((payment) => {
-      const month = new Date(payment.createdAt).getMonth();
-      monthlyData[month] += payment.amount;
+      // Prefer batch month if payment is attached to a batch in this academic year
+      let monthIndex = -1;
+      if (
+        payment.batch &&
+        payment.batch.academicYearId === academicYear.id &&
+        typeof payment.batch.month === "number"
+      ) {
+        monthIndex = payment.batch.month - 1;
+      } else {
+        monthIndex = new Date(payment.createdAt).getMonth();
+      }
+      if (monthIndex >= 0 && monthIndex < 12)
+        monthlyData[monthIndex] += payment.amount;
     });
 
     const monthlyRevenue = months.map((month, index) => ({
@@ -68,17 +108,45 @@ export async function GET(request: NextRequest) {
     }));
 
     // Get revenue by class
+    // Fetch classes (optionally a single class if filtered)
     const classes = await prisma.class.findMany({
-      where: { academicYearId: academicYear.id },
+      where: classId ? { id: classId, academicYearId: academicYear.id } : { academicYearId: academicYear.id },
     });
 
     const byClassData = await Promise.all(
       classes.map(async (cls) => {
+        // Build where for class aggregates, apply same month filter if present
+        let classWhere: any = {
+          status: "BERHASIL",
+          student: { classId: cls.id },
+        };
+
+        if (monthParam) {
+          const monthInt = parseInt(monthParam, 10);
+          const calendarYear = monthInt >= 7 ? academicYear.startDate.getFullYear() : academicYear.endDate.getFullYear();
+          const monthStart = new Date(calendarYear, monthInt - 1, 1);
+          const monthEnd = new Date(calendarYear, monthInt, 0, 23, 59, 59, 999);
+
+          classWhere = {
+            ...classWhere,
+            OR: [
+              { batch: { academicYearId: academicYear.id, month: monthInt } },
+              { createdAt: { gte: monthStart, lte: monthEnd } },
+            ],
+          };
+        } else {
+          // default to academic year range or batch
+          classWhere = {
+            ...classWhere,
+            OR: [
+              { batch: { academicYearId: academicYear.id } },
+              { createdAt: { gte: academicYear.startDate, lte: academicYear.endDate } },
+            ],
+          };
+        }
+
         const total = await prisma.payment.aggregate({
-          where: {
-            status: "BERHASIL",
-            student: { classId: cls.id },
-          },
+          where: classWhere,
           _sum: { amount: true },
         });
 

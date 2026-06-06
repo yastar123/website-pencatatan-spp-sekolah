@@ -15,8 +15,13 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search") || "";
     const studentIdQ = searchParams.get("studentId") || "";
     const statusQ = searchParams.get("status") || "";
+    const paymentTypeQ = searchParams.get("paymentType") || "";
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = 10;
+    const requestedLimit = parseInt(searchParams.get("limit") || "10");
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 1000)
+        : 10;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -39,6 +44,11 @@ export async function GET(request: NextRequest) {
       where.status = statusQ;
     }
 
+    // Filter by paymentType
+    if (paymentTypeQ) {
+      where.paymentType = paymentTypeQ;
+    }
+
     // Students can only see their own payments
     if (session.role === "SISWA") {
       const currentUser = await prisma.user.findUnique({
@@ -57,7 +67,10 @@ export async function GET(request: NextRequest) {
     const [payments, total] = await Promise.all([
       prisma.payment.findMany({
         where,
-        include: { student: { select: { name: true, nis: true, id: true } } },
+        include: {
+          student: { include: { class: { select: { name: true } } } },
+          batch: true,
+        },
         skip,
         take: limit,
         orderBy: { createdAt: "desc" },
@@ -93,12 +106,46 @@ export async function POST(request: NextRequest) {
       status,
       proofUrl,
       notes,
+      month,
+      year,
     } = await request.json();
+
+    // normalize UI "PMS" type to stored "SPP" so queries and FIFO match
+    const canonicalType = paymentType === "PMS" ? "SPP" : paymentType;
 
     const resolvedStatus = status || "BERHASIL";
 
-    // Jika jenis pembayaran SPP, periksa nominal SPP yang berlaku untuk siswa
-    if (paymentType === "SPP") {
+    // Get or create batch for this month/year
+    const activeYear = await prisma.academicYear.findFirst({
+      where: { active: true },
+    });
+
+    let batchId: string | null = null;
+    if (activeYear && month && year) {
+      const batch = await prisma.batch.findFirst({
+        where: {
+          month,
+          year,
+          academicYearId: activeYear.id,
+        },
+      });
+
+      if (batch) {
+        batchId = batch.id;
+      } else {
+        const newBatch = await prisma.batch.create({
+          data: {
+            month,
+            year,
+            academicYearId: activeYear.id,
+          },
+        });
+        batchId = newBatch.id;
+      }
+    }
+
+    // Jika jenis pembayaran SPP (UI may send PMS), periksa nominal yang berlaku untuk siswa
+    if (canonicalType === "SPP") {
       const student = await prisma.student.findUnique({
         where: { id: studentId },
       });
@@ -119,16 +166,24 @@ export async function POST(request: NextRequest) {
 
       // Pembayaran kurang dari nominal SPP: buat record bayar + buat tunggakan untuk sisa
       if (amount < expected) {
+        // find oldest debt batch to attach to payment if any
+        const oldestDebt = await prisma.payment.findFirst({
+          where: { studentId, status: "MENUNGGAK", paymentType: canonicalType },
+          orderBy: { createdAt: "asc" },
+        });
+        const attachBatchId = oldestDebt?.batchId ?? batchId;
+
         // catat pembayaran yang masuk
         const paid = await prisma.payment.create({
           data: {
             studentId,
-            paymentType,
+            paymentType: canonicalType,
             amount,
             paymentMethod,
             status: "BERHASIL",
             proofUrl,
             notes,
+            batchId: attachBatchId,
             createdBy: session.userId,
           },
         });
@@ -138,11 +193,12 @@ export async function POST(request: NextRequest) {
         const debt = await prisma.payment.create({
           data: {
             studentId,
-            paymentType,
+            paymentType: canonicalType,
             amount: remaining,
             paymentMethod: "-",
             status: "MENUNGGAK",
             notes: `Sisa SPP bulan, dari pembayaran sebagian Rp ${amount.toLocaleString("id-ID")}`,
+            batchId: attachBatchId,
             createdBy: session.userId,
           },
         });
@@ -163,15 +219,16 @@ export async function POST(request: NextRequest) {
     const payment = await prisma.payment.create({
       data: {
         studentId,
-        paymentType,
+        paymentType: canonicalType,
         amount,
         paymentMethod,
         status: resolvedStatus,
         proofUrl,
         notes,
+        batchId,
         createdBy: session.userId,
       },
-      include: { student: { select: { name: true, nis: true } } },
+      include: { student: { include: { class: { select: { name: true } } } } },
     });
 
     // ── Alokasi FIFO: tutup tunggakan paling lama terlebih dahulu ────────────
@@ -180,9 +237,11 @@ export async function POST(request: NextRequest) {
     if (resolvedStatus === "BERHASIL") {
       // Ambil semua MENUNGGAK untuk siswa ini, terlama dulu
       const debts = await prisma.payment.findMany({
-        where: { studentId, status: "MENUNGGAK", paymentType },
+        where: { studentId, status: "MENUNGGAK", paymentType: canonicalType },
         orderBy: { createdAt: "asc" },
       });
+
+      const firstDebtBatchId = debts.length > 0 ? debts[0].batchId : null;
 
       let remaining = amount;
 
@@ -215,6 +274,13 @@ export async function POST(request: NextRequest) {
         where: { id: studentId },
         data: { status: sisaTunggakan > 0 ? "MENUNGGAK" : "LUNAS" },
       });
+      // Attach payment to the batch of the first debt it covered if available
+      if (!payment.batchId && firstDebtBatchId) {
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { batchId: firstDebtBatchId },
+        });
+      }
     } else if (resolvedStatus === "MENUNGGAK") {
       await prisma.student.update({
         where: { id: studentId },

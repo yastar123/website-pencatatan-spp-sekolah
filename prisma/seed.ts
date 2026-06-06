@@ -1,7 +1,7 @@
-import * as Prisma from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-const prisma = new Prisma.PrismaClient();
+const prisma = new PrismaClient();
 
 async function hashPassword(password: string): Promise<string> {
   const salt = await bcrypt.genSalt(10);
@@ -20,12 +20,13 @@ async function main() {
     await prisma.class.deleteMany({});
     await prisma.academicYear.deleteMany({});
     await prisma.user.deleteMany({});
+
     console.log("Database cleaned");
   } catch (e) {
     console.log("Error cleaning database (first run is OK):", e);
   }
 
-  // Create Academic Year
+  // Academic Year
   const academicYear = await prisma.academicYear.create({
     data: {
       year: "2023/2024",
@@ -33,9 +34,10 @@ async function main() {
       endDate: new Date("2024-06-30"),
     },
   });
+
   console.log("Created academic year:", academicYear.year);
 
-  // Create Classes
+  // Classes
   const classes = await Promise.all([
     prisma.class.create({
       data: {
@@ -56,19 +58,40 @@ async function main() {
       },
     }),
   ]);
-  console.log("Created classes:", classes.map((c: any) => c.name).join(", "));
 
-  // Create SPP Rates
-  const sppRate = await prisma.sPPRate.create({
-    data: {
-      classId: classes[0].id,
-      academicYearId: academicYear.id,
-      amount: 30000, // Rp 30.000
-    },
-  });
-  console.log("Created SPP rate:", sppRate.amount);
+  console.log("Created classes:", classes.map((c) => c.name).join(", "));
 
-  // Create Students
+  // PMS / SPP Rates per class
+  const sppRates = await Promise.all([
+    prisma.sPPRate.create({
+      data: {
+        classId: classes[0].id,
+        academicYearId: academicYear.id,
+        amount: 150000,
+      },
+    }),
+    prisma.sPPRate.create({
+      data: {
+        classId: classes[1].id,
+        academicYearId: academicYear.id,
+        amount: 150000,
+      },
+    }),
+    prisma.sPPRate.create({
+      data: {
+        classId: classes[2].id,
+        academicYearId: academicYear.id,
+        amount: 150000,
+      },
+    }),
+  ]);
+
+  console.log(
+    "Created PMS rates:",
+    sppRates.map((r) => `${r.classId}:${r.amount}`).join(", "),
+  );
+
+  // Students
   const students = await Promise.all([
     prisma.student.create({
       data: {
@@ -80,6 +103,7 @@ async function main() {
         status: "LUNAS",
       },
     }),
+
     prisma.student.create({
       data: {
         nis: "4236433",
@@ -90,6 +114,7 @@ async function main() {
         status: "MENUNGGAK",
       },
     }),
+
     prisma.student.create({
       data: {
         nis: "4236434",
@@ -101,34 +126,39 @@ async function main() {
       },
     }),
   ]);
-  console.log("Created students:", students.map((s: any) => s.name).join(", "));
 
-  // Create Users
-  const bendaharaPassword = await hashPassword("bendahara123");
-  const siswaPassword = await hashPassword("siswa123");
+  console.log("Created students:", students.map((s) => s.name).join(", "));
 
+  // User Passwords
+  const bendaharaPassword = await hashPassword("bendaharapgri4");
+  const siswaPassword = await hashPassword("siswapgri4");
+
+  // Bendahara User
   const bendahara = await prisma.user.create({
     data: {
-      email: "bendahara@sekolah.com",
+      email: "bendahara@pgri4",
       password: bendaharaPassword,
-      name: "Bendahara Admin",
+      name: "Bendahara Sekolah",
       role: "BENDAHARA",
     },
   });
+
   console.log("Created bendahara user:", bendahara.email);
 
+  // Siswa User
   const user1 = await prisma.user.create({
     data: {
-      email: "sarah@sekolah.com",
+      email: "siswa@pgri4",
       password: siswaPassword,
-      name: "Sarah Jones",
+      name: "Siswa",
       role: "SISWA",
       studentId: students[0].id,
     },
   });
+
   console.log("Created siswa user:", user1.email);
 
-  // Create Batch for monthly tracking
+  // Batch
   const batch = await prisma.batch.create({
     data: {
       month: 10,
@@ -136,26 +166,28 @@ async function main() {
       academicYearId: academicYear.id,
     },
   });
+
   console.log("Created batch:", `${batch.month}/${batch.year}`);
 
-  // Create Sample Payments
+  // Payments
   const payments = await Promise.all([
     prisma.payment.create({
       data: {
         studentId: students[0].id,
         paymentType: "SPP",
-        amount: 30000,
+        amount: 150000,
         paymentMethod: "Transfer Bank",
         status: "BERHASIL",
         batchId: batch.id,
         notes: "Pembayaran SPP bulan Oktober",
       },
     }),
+
     prisma.payment.create({
       data: {
         studentId: students[1].id,
         paymentType: "SPP",
-        amount: 30000,
+        amount: 150000,
         paymentMethod: "Tunai",
         status: "BERHASIL",
         batchId: batch.id,
@@ -163,14 +195,15 @@ async function main() {
       },
     }),
   ]);
+
   console.log("Created payments:", payments.length);
 
   console.log("Database seeding completed!");
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
+  .catch((error) => {
+    console.error("Seed Error:", error);
     process.exit(1);
   })
   .finally(async () => {

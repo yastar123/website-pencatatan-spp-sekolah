@@ -262,6 +262,26 @@ export default function PengaturanPage() {
     }
   };
 
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalRates, setModalRates] = useState<any[]>([]);
+  const [modalYearLabel, setModalYearLabel] = useState("");
+
+  const handleViewRates = async (yearItem: AcademicYear) => {
+    try {
+      const res = await fetch("/api/spp-rates");
+      const data = await res.json();
+      const rates = (data.rates || []).filter(
+        (r: any) => r.academicYearId === yearItem.id,
+      );
+      setModalRates(rates);
+      setModalYearLabel(yearItem.year);
+      setModalOpen(true);
+    } catch (error) {
+      console.error("Failed to fetch rates:", error);
+      alert("Gagal memuat data nominal PMS untuk tahun ajaran ini.");
+    }
+  };
+
   if (pageLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -348,21 +368,70 @@ export default function PengaturanPage() {
                       </span>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleEditYear(year)}
-                    className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg font-medium"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDeleteYear(year.id)}
-                    className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium"
-                  >
-                    Hapus
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleViewRates(year)}
+                      className="px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg font-medium"
+                    >
+                      Lihat PMS
+                    </button>
+                    <button
+                      onClick={() => handleEditYear(year)}
+                      className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg font-medium"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeleteYear(year.id)}
+                      className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium"
+                    >
+                      Hapus
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setModalOpen(false)}
+          />
+          <div className="bg-white rounded-lg shadow-lg max-w-xl w-full z-10 p-6">
+            <div className="flex items-start justify-between">
+              <h3 className="text-lg font-semibold">
+                Riwayat Nominal PMS - {modalYearLabel}
+              </h3>
+              <button
+                onClick={() => setModalOpen(false)}
+                className="text-gray-500"
+              >
+                Tutup
+              </button>
+            </div>
+            <div className="mt-4">
+              {modalRates.length === 0 ? (
+                <p className="text-sm text-gray-600">
+                  Belum ada nominal yang diset untuk tahun ajaran ini.
+                </p>
+              ) : (
+                <ul className="space-y-2 max-h-64 overflow-auto">
+                  {modalRates.map((r) => (
+                    <li
+                      key={r.id}
+                      className="flex justify-between text-sm text-gray-800 border-b pb-2"
+                    >
+                      <div>{r.class?.name || "(semua kelas)"}</div>
+                      <div>Rp {r.amount.toLocaleString("id-ID")}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
       )}

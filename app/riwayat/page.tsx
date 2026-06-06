@@ -6,11 +6,12 @@ import { formatRupiah } from "@/lib/utils";
 import { Search, Download, Eye } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import PaymentDetailModal from "@/components/modals/payment-detail-modal";
+import PaymentEditModal from "@/components/modals/payment-edit-modal";
 
 interface Payment {
   id: string;
   transactionNo: string;
-  student: { name: string; nis: string };
+  student: { name: string; nis: string; class?: { name: string } };
   paymentType: string;
   amount: number;
   paymentMethod: string;
@@ -18,6 +19,7 @@ interface Payment {
   proofUrl?: string;
   createdAt: string;
   notes?: string;
+  batch?: { month: number; year: number } | null;
 }
 
 interface PaginationData {
@@ -59,22 +61,111 @@ async function downloadPDF(payment: Payment) {
   const W = doc.internal.pageSize.getWidth();
   let y = 0;
 
-  // ── Header band ──────────────────────────────────────────────────────
-  doc.setFillColor(37, 99, 235); // blue-600
-  doc.rect(0, 0, W, 28, "F");
+  // Helper: convert image URL to data URL
+  const toDataUrl = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.error("Failed to load image:", url, e);
+      return null;
+    }
+  };
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
+  // Load kop surat images from public folder
+  const [leftImg, rightImg] = await Promise.all([
+    toDataUrl("/kopsurat-1.png"),
+    toDataUrl("/kopsurat-2.png"),
+  ]);
+
+  // ── Letterhead (kop surat) ───────────────────────────────────────────
+  const logoW = 16; // mm (slightly larger logos)
+  const logoH = 16; // mm
+  const logoTop = 6;
+  if (leftImg) {
+    try {
+      doc.addImage(leftImg, "PNG", 6, logoTop, logoW, logoH);
+    } catch (e) {
+      // ignore image errors
+    }
+  }
+  if (rightImg) {
+    try {
+      doc.addImage(rightImg, "PNG", W - 6 - logoW, logoTop, logoW, logoH);
+    } catch (e) {}
+  }
+
+  // Centered organization text with wrapping
+  doc.setTextColor(0, 0, 0);
+  const centerWidth = W - (logoW + 8) * 2; // tighter padding around logos
+  let headerY = 10;
+
+  // Line 1
   doc.setFont("helvetica", "bold");
-  doc.text("KWITANSI PEMBAYARAN", W / 2, 11, { align: "center" });
+  doc.setFontSize(5);
+  const line1 = doc.splitTextToSize(
+    "YAYASAN PEMBINA LEMBAGA PENDIDIKAN PGRI PUSAT",
+    centerWidth,
+  );
+  doc.text(line1, W / 2, headerY, { align: "center" });
+  headerY += (line1.length || 1) * 3.5;
 
-  doc.setFontSize(9);
+  // Line 2
+  doc.setFontSize(4);
+  const line2 = doc.splitTextToSize(
+    "PERWAKILAN YAYASAN PEMBINA LEMBAGA PENDIDIKAN PGRI JAWA TIMUR",
+    centerWidth,
+  );
+  doc.text(line2, W / 2, headerY, { align: "center" });
+  headerY += (line2.length || 1) * 2.8;
+
+  // Main title with dynamic sizing to avoid excessive wrapping
+  doc.setFont("helvetica", "bold");
+  let titleFont = 8;
+  const title = "SMK PGRI - 4 KOTA PASURUAN";
+  let titleLines = [] as string[];
+  while (titleFont >= 7) {
+    doc.setFontSize(titleFont);
+    titleLines = doc.splitTextToSize(title, centerWidth) as string[];
+    if (titleLines.length <= 2) break;
+    titleFont -= 1;
+  }
+  doc.setFontSize(titleFont);
+  doc.text(titleLines, W / 2, headerY, { align: "center" });
+  headerY += (titleLines.length || 1) * (titleFont * 0.26 + 1);
+
+  // Address and contact lines — compact
+  doc.setFontSize(6);
   doc.setFont("helvetica", "normal");
-  doc.text("Sistem Informasi Pembayaran Sekolah", W / 2, 18, {
-    align: "center",
-  });
+  const line4 = doc.splitTextToSize(
+    "Jl. KH. Mansyur Kelurahan Sekargadung Kecamatan Purworejo Kota Pasuruan",
+    centerWidth,
+  );
+  doc.text(line4, W / 2, headerY, { align: "center" });
+  headerY += (line4.length || 1) * 3;
 
-  y = 36;
+  const line5 = doc.splitTextToSize(
+    "Kode Pos 67127   Telp/Fax: 0343-6008008   E-mail: smkpgri4pasuruan@gmail.com   Website: www.smkpgri4-pas.sch.id",
+    centerWidth,
+  );
+  doc.text(line5, W / 2, headerY, { align: "center" });
+  headerY += (line5.length || 1) * 3;
+
+  // separator lines
+  const sepY1 = headerY + 1;
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.5);
+  doc.line(6, sepY1, W - 6, sepY1);
+  doc.setLineWidth(0.9);
+  doc.line(6, sepY1 + 1, W - 6, sepY1 + 1);
+  // add extra vertical gap between kop surat and transaction badge
+  y = sepY1 + 20;
 
   // ── Transaction No badge ─────────────────────────────────────────────
   doc.setFillColor(239, 246, 255); // blue-50
@@ -143,6 +234,7 @@ async function downloadPDF(payment: Payment) {
   drawSection("DATA SISWA");
   drawRow("Nama Siswa", payment.student.name);
   drawRow("NIS", payment.student.nis);
+  drawRow("Kelas", payment.student.class?.name ?? "-");
   y += 3;
 
   // ── Detail Pembayaran ────────────────────────────────────────────────
@@ -150,6 +242,32 @@ async function downloadPDF(payment: Payment) {
   drawRow("Jenis Pembayaran", payment.paymentType);
   drawRow("Nominal", formatRupiah(payment.amount), true);
   drawRow("Metode Pembayaran", payment.paymentMethod);
+  // Dibayar untuk bulan — prefer batch info if present
+  const monthNames = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+  ];
+  let paidFor = "-";
+  if (payment.batch && payment.batch.month) {
+    const m = payment.batch.month;
+    const y = payment.batch.year;
+    paidFor = `${monthNames[m - 1]} ${y}`;
+  } else if (payment.notes) {
+    // try to parse month/year from notes (basic)
+    const match = payment.notes.match(/(Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s*(\d{4})/i);
+    if (match) paidFor = `${match[1]} ${match[2]}`;
+  }
+  drawRow("Dibayar untuk bulan", paidFor);
 
   // Status with colored text
   doc.setTextColor(107, 114, 128);
@@ -204,35 +322,38 @@ export default function RiwayatPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [detailPayment, setDetailPayment] = useState<Payment | null>(null);
+  const [editPayment, setEditPayment] = useState<Payment | null>(null);
+
+  // fetchPayments is used in effect and after CRUD ops
+  const fetchPayments = async (page = pagination.page) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        ...(search && { search }),
+      });
+      const res = await fetch(`/api/payments?${params}`);
+      const data = await res.json();
+      setPayments(data.payments || []);
+      setPagination(
+        data.pagination ?? {
+          page: 1,
+          limit: pagination.limit,
+          total: 0,
+          pages: 0,
+        },
+      );
+    } catch (error) {
+      console.error("Failed to fetch payments:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchPayments = async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({
-          page: pagination.page.toString(),
-          ...(search && { search }),
-        });
-        const res = await fetch(`/api/payments?${params}`);
-        const data = await res.json();
-        setPayments(data.payments || []);
-        setPagination(
-          data.pagination ?? {
-            page: 1,
-            limit: pagination.limit,
-            total: 0,
-            pages: 0,
-          },
-        );
-      } catch (error) {
-        console.error("Failed to fetch payments:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    const debounceTimer = setTimeout(fetchPayments, 300);
-    return () => clearTimeout(debounceTimer);
+    const t = setTimeout(() => fetchPayments(pagination.page), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, pagination.page]);
 
   return (
@@ -240,7 +361,7 @@ export default function RiwayatPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Riwayat Pembayaran</h1>
-        <p className="text-gray-600 mt-1">Lihat semua pembayaran SPP</p>
+        <p className="text-gray-600 mt-1">Lihat semua pembayaran PMS</p>
       </div>
 
       {/* Filters */}
@@ -315,7 +436,20 @@ export default function RiwayatPage() {
                       {payment.transactionNo}
                     </td>
                     <td className="py-3 px-4 text-gray-600 whitespace-nowrap">
-                      {new Date(payment.createdAt).toLocaleDateString("id-ID")}
+                      {payment.batch &&
+                      payment.batch.month &&
+                      payment.batch.year
+                        ? new Date(
+                            payment.batch.year,
+                            payment.batch.month - 1,
+                            1,
+                          ).toLocaleDateString("id-ID", {
+                            month: "long",
+                            year: "numeric",
+                          })
+                        : new Date(payment.createdAt).toLocaleDateString(
+                            "id-ID",
+                          )}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
                       {payment.student.nis}
@@ -348,6 +482,36 @@ export default function RiwayatPage() {
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded transition-colors"
                         >
                           <Eye size={16} />
+                        </button>
+                        {/* Edit */}
+                        <button
+                          onClick={() => setEditPayment(payment)}
+                          title="Edit"
+                          className="p-2 text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
+                        >
+                          ✎
+                        </button>
+                        {/* Delete */}
+                        <button
+                          onClick={async () => {
+                            if (!confirm("Hapus transaksi ini?")) return;
+                            try {
+                              const res = await fetch(
+                                `/api/payments/${payment.id}`,
+                                { method: "DELETE" },
+                              );
+                              if (!res.ok) throw new Error("Failed");
+                              // refresh
+                              fetchPayments(pagination.page);
+                            } catch (e) {
+                              console.error(e);
+                              alert("Gagal menghapus transaksi");
+                            }
+                          }}
+                          title="Hapus"
+                          className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
+                        >
+                          🗑
                         </button>
                         {/* Download PDF */}
                         <button
@@ -456,6 +620,17 @@ export default function RiwayatPage() {
           onClose={() => setDetailPayment(null)}
           onDownload={(p) => {
             downloadPDF(p);
+          }}
+        />
+      )}
+
+      {editPayment && (
+        <PaymentEditModal
+          payment={editPayment}
+          onClose={() => setEditPayment(null)}
+          onSaved={() => {
+            setEditPayment(null);
+            fetchPayments(pagination.page);
           }}
         />
       )}

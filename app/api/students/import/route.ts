@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        await (prisma.student.create as any)({
+        const created = await (prisma.student.create as any)({
           data: {
             nis,
             nisn: row.nisn?.toString().trim() || null,
@@ -120,6 +120,94 @@ export async function POST(request: NextRequest) {
             status: "MENUNGGAK",
           },
         });
+
+        // create initial monthly tunggakan for this student using PMS/SPP rate
+        try {
+          const cls = await prisma.class.findUnique({ where: { id: classId } });
+          const ayId = cls?.academicYearId || activeYear.id;
+          const academicYear = await prisma.academicYear.findUnique({
+            where: { id: ayId },
+          });
+          if (academicYear) {
+            const rate = await prisma.sPPRate.findFirst({
+              where: { classId, academicYearId: academicYear.id },
+              orderBy: { createdAt: "desc" },
+            });
+            if (rate) {
+              let cur = new Date(academicYear.startDate);
+              const end = new Date(academicYear.endDate);
+              const ops: Promise<any>[] = [];
+              while (cur <= end) {
+                const monthName = cur.toLocaleString("id-ID", {
+                  month: "long",
+                });
+                const yearNum = cur.getFullYear();
+                ops.push(
+                  prisma.payment.create({
+                    data: {
+                      studentId: created.id,
+                      paymentType: "PMS",
+                      amount: rate.amount,
+                      paymentMethod: "-",
+                      status: "MENUNGGAK",
+                      notes: `Tunggakan PMS bulan ${monthName} ${yearNum}`,
+                      createdBy: session.userId,
+                    },
+                  }),
+                );
+                cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+              }
+              await Promise.all(ops);
+            } else {
+              // No rate for this class in the academic year. Try fallback:
+              // 1) find any rate in the same academic year (most recent)
+              // 2) if found, create an sPPRate for this class with that amount
+              // 3) then create monthly tunggakan as usual so import behaves like manual flow
+              const fallback = await prisma.sPPRate.findFirst({
+                where: { academicYearId: academicYear.id },
+                orderBy: { createdAt: "desc" },
+              });
+              if (fallback) {
+                const newRate = await prisma.sPPRate.create({
+                  data: {
+                    classId,
+                    academicYearId: academicYear.id,
+                    amount: fallback.amount,
+                  },
+                });
+                try {
+                  let cur = new Date(academicYear.startDate);
+                  const end = new Date(academicYear.endDate);
+                  const ops: Promise<any>[] = [];
+                  while (cur <= end) {
+                    const monthName = cur.toLocaleString("id-ID", { month: "long" });
+                    const yearNum = cur.getFullYear();
+                    ops.push(
+                      prisma.payment.create({
+                        data: {
+                          studentId: created.id,
+                          paymentType: "PMS",
+                          amount: newRate.amount,
+                          paymentMethod: "-",
+                          status: "MENUNGGAK",
+                          notes: `Tunggakan PMS bulan ${monthName} ${yearNum}`,
+                          createdBy: session.userId,
+                        },
+                      }),
+                    );
+                    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+                  }
+                  await Promise.all(ops);
+                } catch (e) {
+                  console.error("Failed to create debts with fallback rate:", e);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to create debts for imported student:", e);
+        }
+
         successCount++;
       } catch (err: any) {
         const isDuplicate =

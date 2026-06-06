@@ -35,7 +35,7 @@ async function downloadLaporanExcel(
 
   // ── Sheet 1: Ringkasan ────────────────────────────────────────────────
   const ringkasanData = [
-    ["LAPORAN REKAPITULASI PEMBAYARAN SPP"],
+    ["LAPORAN REKAPITULASI PEMBAYARAN PMS"],
     [`Periode Tahun Ajaran: ${selectedYear}`],
     [],
     ["RINGKASAN STATISTIK"],
@@ -81,7 +81,7 @@ async function downloadLaporanExcel(
     "Per Kelas",
   );
 
-  XLSX.writeFile(wb, `laporan-spp-${selectedYear.replace("/", "-")}.xlsx`);
+  XLSX.writeFile(wb, `laporan-pms-${selectedYear.replace("/", "-")}.xlsx`);
 }
 
 async function downloadLaporanPDF(
@@ -101,7 +101,7 @@ async function downloadLaporanPDF(
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
-  doc.text("LAPORAN REKAPITULASI PEMBAYARAN SPP", W / 2, 13, {
+  doc.text("LAPORAN REKAPITULASI PEMBAYARAN PMS", W / 2, 13, {
     align: "center",
   });
 
@@ -308,7 +308,7 @@ async function downloadLaporanPDF(
     { align: "center" },
   );
 
-  doc.save(`laporan-spp-${selectedYear.replace("/", "-")}.pdf`);
+  doc.save(`laporan-pms-${selectedYear.replace("/", "-")}.pdf`);
 }
 
 export default function LaporanPage() {
@@ -360,9 +360,10 @@ export default function LaporanPage() {
     const fetchReportData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `/api/reports?year=${encodeURIComponent(selectedYear)}`,
-        );
+        const params = new URLSearchParams({ year: selectedYear });
+        if (selectedMonth && selectedMonth !== "all") params.set("month", selectedMonth);
+        if (selectedClass && selectedClass !== "all") params.set("classId", selectedClass);
+        const res = await fetch(`/api/reports?${params.toString()}`);
         const data = await res.json();
         setReportData(data);
       } catch (error) {
@@ -373,7 +374,7 @@ export default function LaporanPage() {
     };
 
     fetchReportData();
-  }, [selectedYear]);
+  }, [selectedYear, selectedMonth, selectedClass]);
 
   if (loading) {
     return (
@@ -390,7 +391,7 @@ export default function LaporanPage() {
         <h1 className="text-3xl font-bold text-gray-900">
           Laporan & Rekapitulasi
         </h1>
-        <p className="text-gray-600 mt-1">Analisis data pembayaran SPP</p>
+        <p className="text-gray-600 mt-1">Analisis data pembayaran PMS</p>
       </div>
 
       {/* Export Laporan Detail — tombol utama */}

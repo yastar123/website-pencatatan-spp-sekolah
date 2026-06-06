@@ -46,12 +46,17 @@ export default function LoginPage() {
       {/* Left Side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-center items-center bg-gradient-to-br from-blue-600 to-blue-800 text-white p-12">
         <div className="text-center">
-          <h1 className="text-4xl font-bold mb-4">Schoboard</h1>
-          <p className="text-xl text-blue-100 mb-8">
-            Manajemen Pembayaran SPP Sekolah
+          <img
+            src="/logo.jpeg"
+            alt="SMK PGRI 4 Pasuruan"
+            className="mx-auto h-20 w-20 object-contain rounded-full mb-4"
+          />
+          <h1 className="text-3xl font-bold">SMK PGRI 4 Pasuruan</h1>
+          <p className="text-xl text-blue-100 mb-6">
+            Sistem Pembayaran PMS Sekolah
           </p>
           <p className="text-blue-100 max-w-sm">
-            Sistem pencatatan pembayaran SPP yang mudah digunakan untuk
+            Sistem pencatatan pembayaran PMS yang mudah digunakan untuk
             mengelola keuangan sekolah Anda.
           </p>
         </div>
